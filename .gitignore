@@ -1,0 +1,6 @@
+*.blend1
+*.blend@
+__pycache__/
+blend/
+refs/
+exports/
