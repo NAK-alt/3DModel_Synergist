@@ -1509,7 +1509,7 @@ def build_face(mats):
     for v in bm_nose.verts:
         v.co.normalize()  # unit sphere
     # Scale and translate
-    nose_radius = 0.03  # 25% smaller (review v2)
+    nose_radius = 0.036  # review v3: a bit bigger again
     nose_x = FACE_X
     nose_z = mouth_top_z + 0.036  # sits just above the mouth, between the lower eye curves
     nose_y = -(bulge_radius(nose_z) + 0.025)

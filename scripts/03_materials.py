@@ -366,8 +366,8 @@ def create_gold_thread(name, angle_deg):
     links.new(wave.outputs['Fac'], wave_sq.inputs[0])
 
     # Mix between two golds
-    color1 = hex_lin("#A86C05")  # input golds pre-compensated for AgX so the render reads ~#C9962E
-    color2 = hex_lin("#D49A1C")  # ... with highlights toward ~#F0D27A
+    color1 = hex_lin("#B07E1A")  # input golds pre-compensated for AgX so the render reads ~#C9962E
+    color2 = hex_lin("#D8B040")  # ... with highlights toward ~#F0D27A
     mix_color = nodes.new(type='ShaderNodeMixRGB')
     mix_color.location = (0, 0)
     mix_color.blend_type = 'MIX'
