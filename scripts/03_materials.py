@@ -735,6 +735,8 @@ def setup_fur(enabled):
             psys = obj.modifiers["Fur"].particle_system
             psys.settings = bpy.data.particles.new("FurSettings")
 
+        if "fur_density" in obj.vertex_groups:
+            psys.vertex_group_density = "fur_density"  # e.g. no fur inside the mouth recess
         settings = psys.settings
         _set(settings, 'type', 'HAIR')
 
@@ -790,39 +792,8 @@ def setup_fur(enabled):
 # Main
 # ----------------------------------------------------------------------
 
-def main():
-    # Parse arguments after '--'
-    argv = sys.argv
-    if '--' in argv:
-        args_start = argv.index('--') + 1
-        args = argv[args_start:]
-    else:
-        args = []
-
-    parser = argparse.ArgumentParser(description="Look-dev script for mascot")
-    parser.add_argument('project_root', nargs='?', default=None,
-                        help='Project root directory')
-    parser.add_argument('--views', type=str, default='front,threequarter,face,logo',
-                        help='Comma-separated list of views to render')
-    parser.add_argument('--res', type=int, default=1500,
-                        help='Render resolution (square)')
-    parser.add_argument('--samples', type=int, default=384,
-                        help='Cycles samples')
-    parser.add_argument('--no-fur', action='store_true',
-                        help='Disable fur rendering')
-    parsed = parser.parse_args(args)
-
-    # Determine project root
-    if parsed.project_root is None:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(script_dir)
-    else:
-        project_root = parsed.project_root
-
-    blend_dir = os.path.join(project_root, 'blend')
-    render_dir = os.path.join(project_root, 'renders')
-    os.makedirs(render_dir, exist_ok=True)
-
+def apply_lookdev(parsed):
+    """Materials, studio, render settings and fur. Reused by 04_face.py; returns the materials."""
     # ------------------------------------------------------------------
     # Build materials and assign
     # ------------------------------------------------------------------
@@ -930,6 +901,43 @@ def main():
     if not parsed.no_fur:
         print("Setting up fur...")
         setup_fur(True)
+    return {m.name: m for m in bpy.data.materials if m.name.startswith('MAT_')}
+
+
+def main():
+    # Parse arguments after '--'
+    argv = sys.argv
+    if '--' in argv:
+        args_start = argv.index('--') + 1
+        args = argv[args_start:]
+    else:
+        args = []
+
+    parser = argparse.ArgumentParser(description="Look-dev script for mascot")
+    parser.add_argument('project_root', nargs='?', default=None,
+                        help='Project root directory')
+    parser.add_argument('--views', type=str, default='front,threequarter,face,logo',
+                        help='Comma-separated list of views to render')
+    parser.add_argument('--res', type=int, default=1500,
+                        help='Render resolution (square)')
+    parser.add_argument('--samples', type=int, default=384,
+                        help='Cycles samples')
+    parser.add_argument('--no-fur', action='store_true',
+                        help='Disable fur rendering')
+    parsed = parser.parse_args(args)
+
+    # Determine project root
+    if parsed.project_root is None:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(script_dir)
+    else:
+        project_root = parsed.project_root
+
+    blend_dir = os.path.join(project_root, 'blend')
+    render_dir = os.path.join(project_root, 'renders')
+    os.makedirs(render_dir, exist_ok=True)
+
+    apply_lookdev(parsed)
 
     # ------------------------------------------------------------------
     # Render views
