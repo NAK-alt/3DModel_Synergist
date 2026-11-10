@@ -235,14 +235,42 @@ def _finish(name, bm, mat, layer, subsurf=True):
     return obj
 
 
-def outline_patch(name, pts_uv, cx, cz, layer, mat, subsurf=True):
-    """Filled patch from a closed outline [(u, v), ...] around (cx, cz): one n-gon face.
-    Works for concave shapes (stars, hearts); Blender tessellates the n-gon."""
+def outline_patch(name, pts_uv, cx, cz, layer, mat, subsurf=True, grid=0.01):
+    """Filled patch from a closed outline [(u, v), ...] around (cx, cz).
+    subsurf=True: one n-gon face (fine for round shapes, the subdivision smooths it).
+    subsurf=False (sharp props: stars, hearts, drops): constrained Delaunay triangulation with
+    interior points on a `grid` lattice, so the patch bends smoothly over the curved body
+    instead of creasing like folded paper and the thickening never spikes."""
+    from mathutils.geometry import delaunay_2d_cdt
     bm = bmesh.new()
-    verts = [bm.verts.new((cx + u, front_y(cx + u, cz + v), cz + v)) for u, v in pts_uv]
-    bm.faces.new(verts)
+    if subsurf:
+        verts = [bm.verts.new((cx + u, front_y(cx + u, cz + v), cz + v)) for u, v in pts_uv]
+        bm.faces.new(verts)
+        return _finish(name, bm, mat, layer, subsurf)
+    n = len(pts_uv)
+    us = [p[0] for p in pts_uv]
+    vs = [p[1] for p in pts_uv]
+    pts2 = [Vector((u, v)) for u, v in pts_uv]
+    k = 0
+    u0 = min(us) + grid / 2
+    while u0 < max(us):
+        v0 = min(vs) + grid / 2
+        while v0 < max(vs):
+            pts2.append(Vector((u0 + (grid * 0.5 if k % 2 else 0.0) * 0.0, v0)))
+            v0 += grid
+        u0 += grid
+        k += 1
+    edges = [(i, (i + 1) % n) for i in range(n)]
+    out = delaunay_2d_cdt(pts2, edges, [list(range(n))], 1, 1e-6)  # 1 = triangles inside the outline
+    verts_out, faces_out = out[0], out[2]
+    verts = [bm.verts.new((cx + p.x, front_y(cx + p.x, cz + p.y), cz + p.y)) for p in verts_out]
+    for f in faces_out:
+        try:
+            bm.faces.new([verts[i] for i in f])
+        except ValueError:
+            pass
+    bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=1e-6)
     return _finish(name, bm, mat, layer, subsurf)
-
 
 def strip_patch(name, rows_uv, cx, cz, layer, mat, subsurf=True):
     """Quad strip between parallel polylines rows_uv = [[(u, v), ...], [(u, v), ...], ...]
@@ -355,12 +383,12 @@ def build_eyes():
         add_shape_key(brow, "Lower", xz_move(0, -0.02))
         drive_key(brow, "Lower", "brow_lower", ["brow_lower"])
         # Angry (inner down)
-        angle_angry = inner_sign * -math.radians(18)
-        angry_fn = lambda co: xz_move(0, -0.012)(xz_rotate(px, pz, angle_angry)(co))
+        angle_angry = inner_sign * -math.radians(32)  # review: 18 deg was too subtle on the arched brow
+        angry_fn = lambda co: xz_move(0, -0.022)(xz_rotate(px, pz, angle_angry)(co))
         add_shape_key(brow, "Angry", angry_fn)
         drive_key(brow, "Angry", "brow_angry", ["brow_angry"])
         # Sad (inner up)
-        angle_sad = inner_sign * math.radians(20)
+        angle_sad = inner_sign * math.radians(28)
         sad_fn = lambda co: xz_move(0, 0.01)(xz_rotate(px, pz, angle_sad)(co))
         add_shape_key(brow, "Sad", sad_fn)
         drive_key(brow, "Sad", "brow_sad", ["brow_sad"])
@@ -874,11 +902,212 @@ RIG_MATERIAL_HOOKS.append(_mouth_materials)
 # <<< SECTION mouth
 
 # >>> SECTION props
+def _ellipse_pts(w, h, n=48):
+    """Return n points on an ellipse centered at origin, full width w, height h."""
+    pts = []
+    for i in range(n):
+        a = 2 * math.pi * i / n
+        pts.append((w / 2 * math.cos(a), h / 2 * math.sin(a)))
+    return pts
+
+def _drop_pts(r, tip, n=48):
+    """Teardrop pointing UP: circle of radius r with top pulled to point at (0, tip)."""
+    pts = []
+    for i in range(n):
+        a = 2 * math.pi * i / n
+        s = math.sin(a)
+        blend = s ** 3 if s > 0 else 0.0
+        x = r * math.cos(a) * (1 - blend)
+        y = r * s + (tip - r) * blend
+        pts.append((x, y))
+    return pts
+
+def _star_pts(r_out, r_in, points=5, per_edge=6):
+    """5-point star starting at top (90°), edges subdivided into per_edge segments."""
+    base = []
+    for i in range(points):
+        ang_out = math.radians(90 + i * (360 / points))
+        ang_in = ang_out + math.radians(180 / points)
+        base.append((r_out * math.cos(ang_out), r_out * math.sin(ang_out)))
+        base.append((r_in * math.cos(ang_in), r_in * math.sin(ang_in)))
+    # base now has 2*points vertices alternating outer, inner
+    total_edges = 2 * points
+    pts = []
+    for i in range(total_edges):
+        start = base[i]
+        end = base[(i + 1) % total_edges]
+        for j in range(per_edge):
+            t = j / per_edge
+            x = start[0] + (end[0] - start[0]) * t
+            y = start[1] + (end[1] - start[1]) * t
+            pts.append((x, y))
+    return pts
+
+def _heart_pts(size, n=64):
+    """Classic parametric heart, point at bottom, scaled to width `size`, centered."""
+    pts_raw = []
+    for i in range(n):
+        t = 2 * math.pi * i / n
+        x = 16 * math.sin(t) ** 3
+        y = 13 * math.cos(t) - 5 * math.cos(2*t) - 2 * math.cos(3*t) - math.cos(4*t)
+        pts_raw.append((x, y))
+    # compute bounding box
+    xs = [p[0] for p in pts_raw]
+    ys = [p[1] for p in pts_raw]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    width_raw = max_x - min_x
+    center_x = (min_x + max_x) / 2
+    center_y = (min_y + max_y) / 2
+    scale = size / width_raw
+    pts = [((x - center_x) * scale, (y - center_y) * scale) for x, y in pts_raw]
+    return pts
+
+def _spiral_rows(r_max, turns, width, n=120):
+    """Two rows (inner and outer) of an Archimedean spiral band, radius 0.012 to r_max."""
+    inner = []
+    outer = []
+    for i in range(n + 1):
+        t = i / n
+        theta = 2 * math.pi * turns * t
+        r = 0.012 + (r_max - 0.012) * t
+        x = r * math.cos(theta)
+        y = r * math.sin(theta)
+        # inner edge radius
+        r_inner = max(0.001, r - width / 2)
+        xi = r_inner * math.cos(theta)
+        yi = r_inner * math.sin(theta)
+        # outer edge radius
+        r_outer = r + width / 2
+        xo = r_outer * math.cos(theta)
+        yo = r_outer * math.sin(theta)
+        inner.append((xi, yi))
+        outer.append((xo, yo))
+    return [inner, outer]
+
+def build_props():
+    new_objects = []
+    # Blush
+    for side in ("Left", "Right"):
+        cx = FACE_X + (0.235 if side == "Left" else -0.235)
+        cz = MOUTH_TOP - 0.02
+        obj = outline_patch(f"Blush_{side}", _ellipse_pts(0.10, 0.05), cx, cz, 2, None)
+        drive_hidden(obj, "blush <= 0.5", ["blush"])
+        new_objects.append(obj)
+    # Sweat drop
+    cx = FACE_X + 0.33
+    cz = hoop_z(0.29) + 0.05
+    obj = outline_patch("Prop_Sweat", _drop_pts(0.028, 0.075), cx, cz, 3, None, subsurf=False)
+    drive_hidden(obj, "prop_sweat <= 0.5", ["prop_sweat"])
+    new_objects.append(obj)
+    # Tears
+    for side in ("Left", "Right"):
+        outer = 1 if side == "Left" else -1
+        cx = eye_x(side) + outer * 0.06
+        cz = EYE_Z - 0.13
+        # stream rows
+        rows = []
+        for offset in (-0.016, 0.0, 0.016):
+            row = []
+            for i in range(16):
+                v = -0.13 * (i / 15)
+                u_base = outer * 0.03 + 0.006 * math.sin(v * 20)
+                row.append((u_base + offset, v))
+            rows.append(row)
+        stream = strip_patch(f"Prop_Tear_{side}", rows, cx, cz, 3, None)
+        drive_hidden(stream, "prop_tears <= 0.5", ["prop_tears"])
+        new_objects.append(stream)
+        # drop at end
+        drop_cx = cx + outer * 0.03  # under the stream, which runs at u = outer*0.03
+        drop_cz = cz - 0.15
+        drop = outline_patch(f"Prop_TearDrop_{side}", _drop_pts(0.022, 0.05),
+                              drop_cx, drop_cz, 3, None, subsurf=False)
+        drive_hidden(drop, "prop_tears <= 0.5", ["prop_tears"])
+        new_objects.append(drop)
+    # Stars and hearts and dizzy per eye
+    for side in ("Left", "Right"):
+        cx = eye_x(side)
+        cz = EYE_Z
+        star = outline_patch(f"Prop_Star_{side}", _star_pts(0.105, 0.045), cx, cz, 3, None, subsurf=False)  # keep the points sharp
+        drive_hidden(star, "prop_stars <= 0.5", ["prop_stars"])
+        new_objects.append(star)
+        heart = outline_patch(f"Prop_Heart_{side}", _heart_pts(0.2), cx, cz, 3, None, subsurf=False)
+        drive_hidden(heart, "prop_hearts <= 0.5", ["prop_hearts"])
+        new_objects.append(heart)
+        dizzy = strip_patch(f"Prop_Dizzy_{side}", _spiral_rows(0.075, 2.5, 0.014),
+                            cx, cz, 3, None)
+        drive_hidden(dizzy, "prop_dizzy <= 0.5", ["prop_dizzy"])
+        new_objects.append(dizzy)
+    return new_objects
+
+def _props_materials(lookdev, mats):
+    """Assign materials to all prop objects, creating them if necessary."""
+    def get_mat(name, hex, angle, aniso=0.3):
+        mat = mats.get(name)
+        if mat is None:
+            mat = lookdev.create_satin(name, hex, angle, aniso=aniso)
+            mats[name] = mat
+        return mat
+
+    mapping = {
+        "Blush_Left": ("MAT_Satin_Blush", "#F07C9A", 30),
+        "Blush_Right": ("MAT_Satin_Blush", "#F07C9A", 30),
+        "Prop_Sweat": ("MAT_Satin_Water", "#A8DDF5", 80),
+        "Prop_Tear_Left": ("MAT_Satin_Water", "#A8DDF5", 80),
+        "Prop_Tear_Right": ("MAT_Satin_Water", "#A8DDF5", 80),
+        "Prop_TearDrop_Left": ("MAT_Satin_Water", "#A8DDF5", 80),
+        "Prop_TearDrop_Right": ("MAT_Satin_Water", "#A8DDF5", 80),
+        "Prop_Star_Left": ("MAT_Satin_Star", "#FFC93C", 45),
+        "Prop_Star_Right": ("MAT_Satin_Star", "#FFC93C", 45),
+        "Prop_Heart_Left": ("MAT_Satin_Heart", "#E2324F", 45),
+        "Prop_Heart_Right": ("MAT_Satin_Heart", "#E2324F", 45),
+        "Prop_Dizzy_Left": ("MAT_Satin_Black", None, None),
+        "Prop_Dizzy_Right": ("MAT_Satin_Black", None, None),
+    }
+    for obj_name, (mat_name, hex, angle) in mapping.items():
+        obj = bpy.data.objects.get(obj_name)
+        if not obj:
+            continue
+        if mat_name == "MAT_Satin_Black":
+            mat = mats.get("MAT_Satin_Black")
+            if mat is None:
+                # Should have been created by lookdev; fallback
+                mat = lookdev.create_satin("MAT_Satin_Black", "#000000", 0, aniso=0.3)
+                mats["MAT_Satin_Black"] = mat
+        else:
+            mat = get_mat(mat_name, hex, angle)
+        obj.data.materials.clear()
+        obj.data.materials.append(mat)
+
+RIG_MATERIAL_HOOKS.append(_props_materials)
 # <<< SECTION props
 
 PRESETS = {}  # filled by the presets section: name -> {control: value}
 
 # >>> SECTION presets
+# Expression presets (authored in review): Face_Ctrl values; unlisted controls stay at default.
+PRESETS.update({
+    "Happy": dict(m_big_smile=0.7, m_teeth=0.3, eye_wide=0.1, brow_raise_L=0.3, brow_raise_R=0.3, cheek_puff=0.2),
+    "Big laugh": dict(m_laugh=1.0, m_teeth=0.6, happy_L=1, happy_R=1, brow_raise_L=0.5, brow_raise_R=0.5, cheek_puff=0.4),
+    "Wink": dict(blink_L=1.0, m_smirk_L=0.8, brow_raise_R=0.4, look_x=0.4),
+    "Grateful": dict(closed_smile=1, m_small_smile=1.0, brow_sad=0.4, blush=1, cheek_puff=0.3),
+    "Excited": dict(prop_stars=1, m_laugh=0.8, m_teeth=0.5, brow_raise_L=0.7, brow_raise_R=0.7),
+    "Love": dict(prop_hearts=1, m_big_smile=0.8, blush=1, brow_raise_L=0.3, brow_raise_R=0.3),
+    "Proud": dict(closed_smile=1, m_smirk_L=0.7, brow_raise_L=0.3, brow_raise_R=0.3, cheek_puff=0.2),
+    "Surprised": dict(eye_wide=1.0, pupil_size=-0.4, brow_raise_L=1.0, brow_raise_R=1.0, m_O=0.8),
+    "Shocked": dict(eye_wide=1.0, pupil_size=-1.0, brow_raise_L=1.0, brow_raise_R=1.0, m_shout=1.0, m_teeth=0.3),
+    "Thinking": dict(look_x=-1.0, look_y=1.0, brow_raise_L=0.9, brow_lower=0.3, m_smirk_R=0.6, m_flat=0.3),
+    "Confused": dict(prop_dizzy=1, brow_raise_L=0.8, brow_sad=0.3, m_smirk_R=0.5, m_O=0.3),
+    "Shy": dict(blush=1, look_x=-0.8, look_y=-0.6, pupil_size=0.3, brow_sad=0.4, m_small_smile=0.8),
+    "Embarrassed": dict(prop_sweat=1, blush=0.6, m_big_smile=0.4, m_teeth=1.0, brow_sad=0.6, squint_L=0.2, squint_R=0.2),
+    "Worried": dict(brow_sad=1.0, m_frown=0.6, eye_wide=0.3, look_x=0.5, pupil_size=-0.3),
+    "Sad": dict(brow_sad=1.0, m_frown=1.0, look_y=-1.0, blink_L=0.3, blink_R=0.3, pupil_size=0.4),
+    "Crying": dict(prop_tears=1, brow_sad=1.0, squint_L=0.8, squint_R=0.8, m_shout=0.6, look_y=-0.5),
+    "Annoyed": dict(blink_L=0.45, blink_R=0.45, brow_angry=0.5, m_flat=1.0, look_x=0.7),
+    "Determined": dict(brow_angry=0.9, squint_L=0.4, squint_R=0.4, m_smirk_L=0.5, m_flat=0.5, cheek_puff=0.1),
+    "Sleepy": dict(blink_L=0.7, blink_R=0.7, brow_sad=0.3, m_pout=0.6, look_y=-0.3),
+    "Calm": dict(closed_smile=1, m_small_smile=0.7),
+})
 # <<< SECTION presets
 
 
@@ -902,29 +1131,6 @@ def load_lookdev_module(script_dir):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
-
-
-def make_sheet(paths_and_labels, out_path, cols=5, cell=400):
-    """5x4 labelled grid using Blender's own image API (no PIL inside Blender)."""
-    rows = math.ceil(len(paths_and_labels) / cols)
-    label_h = 0  # labels are burned in by the stamp option when rendering
-    w, h = cols * cell, rows * (cell + label_h)
-    sheet = bpy.data.images.new("expressions_sheet", w, h, alpha=False)
-    px = [0.16] * (w * h * 4)
-    for idx, (path, _label) in enumerate(paths_and_labels):
-        img = bpy.data.images.load(path)
-        img.scale(cell, cell)
-        src = list(img.pixels)
-        col, row = idx % cols, rows - 1 - idx // cols
-        for y in range(cell):
-            dst0 = ((row * cell + y) * w + col * cell) * 4
-            src0 = y * cell * 4
-            px[dst0:dst0 + cell * 4] = src[src0:src0 + cell * 4]
-        bpy.data.images.remove(img)
-    sheet.pixels = px
-    sheet.filepath_raw = out_path
-    sheet.file_format = "PNG"
-    sheet.save()
 
 
 def main():
@@ -973,6 +1179,12 @@ def main():
         return
 
     lookdev.set_camera_view("face")
+    # tighter framing than the look-dev face view: brows to mouth, logo cropped
+    cz = (EYE_Z + MOUTH_TOP) / 2.0 + 0.04
+    bpy.data.objects["Look_Target"].location = (FACE_X, 0.0, cz)
+    cam = bpy.data.objects["Camera"]
+    cam.location = (FACE_X + 0.12, -1.95, cz + 0.04)
+    cam.data.lens = 72
     names = [n for n in (args.presets.split(",") if args.presets else PRESETS.keys()) if n]
     done = []
     t_all = time.perf_counter()
