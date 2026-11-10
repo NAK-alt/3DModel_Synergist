@@ -1543,7 +1543,7 @@ def build_logo(mats):
     with open(trace_path, encoding="utf-8") as f:
         trace = json.load(f)
 
-    S = 0.0006
+    S = 0.0006 * 1.15  # wordmark ~15% taller (review 2026-11-10); badge may touch the hoop seams
     BADGE_SCALE = 0.85
     badge = trace["badge"]
     badge_cx = badge["cx"]
