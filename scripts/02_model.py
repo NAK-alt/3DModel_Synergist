@@ -1545,7 +1545,7 @@ def build_logo(mats):
         trace = json.load(f)
 
     S = 0.0006 * 1.15  # wordmark ~15% taller (review 2026-11-10); badge may touch the hoop seams
-    BADGE_SCALE = 0.85
+    BADGE_SCALE = 0.80  # review 2: smaller badge so the logo can sit 2 cm lower
     badge = trace["badge"]
     badge_cx = badge["cx"]
     badge_cy = badge["cy"]
@@ -1596,7 +1596,7 @@ def build_logo(mats):
         v = -(py - cy_box) * S
         return (u, v, 0.0)
 
-    LOGO_CZ = ((hoop_z(0.44) - 0.18) + (hoop_z(0.76) + 0.03)) / 2.0
+    LOGO_CZ = ((hoop_z(0.44) - 0.18) + (hoop_z(0.76) + 0.03)) / 2.0 - 0.02  # room for bigger mouths
 
     def _conform(u, v, d):
         z = LOGO_CZ + v

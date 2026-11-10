@@ -98,11 +98,15 @@ CONTROLS = {
     # brows
     "brow_raise_L": (0.0, 0.0, 1.0), "brow_raise_R": (0.0, 0.0, 1.0),
     "brow_lower": (0.0, 0.0, 1.0), "brow_angry": (0.0, 0.0, 1.0), "brow_sad": (0.0, 0.0, 1.0),
+    "brow_furrow": (0.0, 0.0, 1.0),
+    "lid_flat": (0.0, 0.0, 1.0),                                   # flat-top half lids (annoyed)
     # mouth shapes
     "m_small_smile": (0.0, 0.0, 1.0), "m_big_smile": (0.0, 0.0, 1.0), "m_laugh": (0.0, 0.0, 1.0),
     "m_O": (0.0, 0.0, 1.0), "m_flat": (0.0, 0.0, 1.0), "m_frown": (0.0, 0.0, 1.0),
     "m_smirk_L": (0.0, 0.0, 1.0), "m_smirk_R": (0.0, 0.0, 1.0), "m_pout": (0.0, 0.0, 1.0),
     "m_teeth": (0.0, 0.0, 1.0), "m_tongue_out": (0.0, 0.0, 1.0), "m_shout": (0.0, 0.0, 1.0),
+    "m_wail": (0.0, 0.0, 1.0), "m_wavy": (0.0, 0.0, 1.0), "m_flat_side": (0.0, 0.0, 1.0),
+    "m_smirk_tight": (0.0, 0.0, 1.0),
     # visemes
     "v_A": (0.0, 0.0, 1.0), "v_E": (0.0, 0.0, 1.0), "v_I": (0.0, 0.0, 1.0), "v_O": (0.0, 0.0, 1.0),
     "v_U": (0.0, 0.0, 1.0), "v_MBP": (0.0, 0.0, 1.0), "v_FV": (0.0, 0.0, 1.0),
@@ -371,27 +375,37 @@ def build_eyes():
         for obj in (outline, white, pupil, highlight):
             add_shape_key(obj, "Blink", blink_fn)
             drive_key(obj, "Blink", f"blink_{S}", [f"blink_{S}"])
+        # flat-top half lid: everything above a line ~40% down from the eye top is pressed flat
+        lid_line = cz + 0.032
+        lid_fn = lambda co: Vector((co.x, co.y, lid_line + (co.z - lid_line) * 0.08)) if co.z > lid_line else co
+        for obj in (outline, white, pupil, highlight):
+            add_shape_key(obj, "LidFlat", lid_fn)
+            drive_key(obj, "LidFlat", "lid_flat", ["lid_flat"])
         for lid in (eyelid_upper, eyelid_lower):
             lid.hide_render = True
             lid.hide_viewport = True
         # --- Brow ---
         px, pz = cx, BROW_CZ + 0.083
         # Raise
-        add_shape_key(brow, "Raise", xz_move(0, 0.035))
+        add_shape_key(brow, "Raise", xz_move(0, 0.06))
         drive_key(brow, "Raise", f"brow_raise_{S}", [f"brow_raise_{S}"])
         # Lower
         add_shape_key(brow, "Lower", xz_move(0, -0.02))
         drive_key(brow, "Lower", "brow_lower", ["brow_lower"])
         # Angry (inner down)
-        angle_angry = inner_sign * -math.radians(32)  # review: 18 deg was too subtle on the arched brow
-        angry_fn = lambda co: xz_move(0, -0.022)(xz_rotate(px, pz, angle_angry)(co))
+        angle_angry = inner_sign * -math.radians(45)  # inner end down, brow pressed onto the eye top
+        angry_fn = lambda co: xz_move(0, -0.032)(xz_rotate(px, pz, angle_angry)(co))
         add_shape_key(brow, "Angry", angry_fn)
         drive_key(brow, "Angry", "brow_angry", ["brow_angry"])
         # Sad (inner up)
-        angle_sad = inner_sign * math.radians(28)
-        sad_fn = lambda co: xz_move(0, 0.01)(xz_rotate(px, pz, angle_sad)(co))
+        angle_sad = inner_sign * math.radians(40)  # inner end up
+        sad_fn = lambda co: xz_move(0, 0.015)(xz_rotate(px, pz, angle_sad)(co))
         add_shape_key(brow, "Sad", sad_fn)
         drive_key(brow, "Sad", "brow_sad", ["brow_sad"])
+        # Furrow / scrunch: pulled toward the nose, lowered and flattened
+        furrow_fn = lambda co: Vector((co.x - inner_sign * -0.022, co.y, pz - 0.015 + (co.z - pz) * 0.6))
+        add_shape_key(brow, "Furrow", furrow_fn)
+        drive_key(brow, "Furrow", "brow_furrow", ["brow_furrow"])
 
         # --- Hide open eye when replaced by arcs/props ---
         vis_expr = (f"happy_{S} > 0.5 or closed_smile > 0.5 or blink_{S} > 0.9"
@@ -437,7 +451,7 @@ RIG_MATERIAL_HOOKS = []  # later sections append (lookdev, mats) -> None callbac
 
 
 # >>> SECTION mouth
-def _mouth_outline(w, h, sag=0.0, lift=0.0, asym=0.0, r=0.5, dz=0.0, n=48):
+def _mouth_outline(w, h, sag=0.0, lift=0.0, asym=0.0, r=0.5, dz=0.0, n=48, wave=0.0, dx=0.0):
     """Return list of n (u, v) points for a closed mouth outline, CCW.
     Top edge: k = 0..n/2 from right to left, bottom edge: k = 1..n/2-1 from left to right.
     """
@@ -447,38 +461,42 @@ def _mouth_outline(w, h, sag=0.0, lift=0.0, asym=0.0, r=0.5, dz=0.0, n=48):
     for k in range(half + 1):
         u = w / 2 - w * k / half
         s = 2 * u / w
-        v = dz + lift * s * s - sag * (1 - s * s) + asym * 0.03 * s
-        pts.append((u, v))
+        v = dz + lift * s * s - sag * (1 - s * s) + asym * 0.03 * s + wave * math.sin(3 * math.pi * s)
+        pts.append((u + dx, v))
     # Bottom edge (left to right, excluding endpoints already included)
     for k in range(1, half):
         u = -w / 2 + w * k / half
         s = 2 * u / w
-        v_top = dz + lift * s * s - sag * (1 - s * s) + asym * 0.03 * s
+        v_top = dz + lift * s * s - sag * (1 - s * s) + asym * 0.03 * s + wave * math.sin(3 * math.pi * s)
         v = v_top - h * max(1 - s * s, 0) ** r
-        pts.append((u, v))
+        pts.append((u + dx, v))
     return pts
 
-# Limits (review): the wordmark starts ~0.099 below MOUTH_TOP and the nose sits right on MOUTH_TOP,
-# so every shape keeps its bottom above -0.092 and its top edge at or below 0; open shapes grow wider.
+# Limits (review 2): mouths read at sticker size, so open shapes are ~1.4x bigger. The logo moved
+# 0.02 lower, so bottoms may reach -0.115 below MOUTH_TOP; the nose may overlap the top lip slightly.
 MOUTH_SHAPES = {
     "rest": dict(w=MOUTH_W, h=MOUTH_H),
-    "small_smile": dict(w=0.17, h=0.012, lift=0.025, dz=-0.012),
-    "big_smile": dict(w=0.25, h=0.085, lift=0.03),
-    "laugh": dict(w=0.27, h=0.09, lift=0.035, r=0.4),
-    "O": dict(w=0.09, h=0.075, sag=-0.012, dz=-0.015),
-    "flat": dict(w=0.16, h=0.010, dz=-0.01),
-    "frown": dict(w=0.17, h=0.02, lift=-0.03, dz=-0.01),
-    "smirk_L": dict(w=0.17, h=0.015, asym=1, dz=-0.012),
-    "smirk_R": dict(w=0.17, h=0.015, asym=-1, dz=-0.012),
-    "pout": dict(w=0.08, h=0.03, sag=-0.008, dz=-0.02),
-    "shout": dict(w=0.24, h=0.09, r=0.3),
-    "vA": dict(w=0.18, h=0.088, r=0.45),
-    "vE": dict(w=0.22, h=0.05, lift=0.01, r=0.4),
-    "vI": dict(w=0.20, h=0.03, lift=0.015),
-    "vO": dict(w=0.11, h=0.08, sag=-0.01, dz=-0.012),
-    "vU": dict(w=0.07, h=0.05, sag=-0.008, dz=-0.02),
-    "vMBP": dict(w=0.15, h=0.006, dz=-0.005),
-    "vFV": dict(w=0.16, h=0.025, dz=-0.005),
+    "small_smile": dict(w=0.24, h=0.014, lift=0.035, dz=-0.012),
+    "big_smile": dict(w=0.32, h=0.10, lift=0.04),
+    "laugh": dict(w=0.34, h=0.112, lift=0.04, r=0.4),
+    "O": dict(w=0.13, h=0.11, sag=-0.018, dz=-0.004),
+    "flat": dict(w=0.20, h=0.012, dz=-0.012),
+    "frown": dict(w=0.22, h=0.026, lift=-0.05, dz=-0.004),
+    "smirk_L": dict(w=0.20, h=0.016, asym=1.4, dz=-0.014),
+    "smirk_R": dict(w=0.20, h=0.016, asym=-1.4, dz=-0.014),
+    "pout": dict(w=0.10, h=0.04, sag=-0.01, dz=-0.02),
+    "shout": dict(w=0.30, h=0.112, r=0.3),
+    "wail": dict(w=0.28, h=0.085, lift=-0.05, r=0.45),            # crying: wide open downturned mouth
+    "wavy": dict(w=0.17, h=0.012, wave=0.010, dz=-0.02),          # worried
+    "flat_side": dict(w=0.13, h=0.011, dx=0.07, asym=-0.4, dz=-0.015),   # annoyed, pushed to one side
+    "smirk_tight": dict(w=0.15, h=0.010, asym=1.2, dx=0.035, dz=-0.015),  # determined
+    "vA": dict(w=0.20, h=0.10, r=0.45),
+    "vE": dict(w=0.25, h=0.055, lift=0.01, r=0.4),
+    "vI": dict(w=0.23, h=0.032, lift=0.015),
+    "vO": dict(w=0.12, h=0.09, sag=-0.012, dz=-0.008),
+    "vU": dict(w=0.08, h=0.055, sag=-0.008, dz=-0.02),
+    "vMBP": dict(w=0.17, h=0.006, dz=-0.008),
+    "vFV": dict(w=0.18, h=0.026, dz=-0.006),
 }
 
 def _set_key(obj, key_name, coords):
@@ -509,7 +527,8 @@ def _mouth_outline_points(shape_name):
     asym = params.get("asym", 0.0)
     r = params.get("r", 0.5)
     dz = params.get("dz", 0.0)
-    return _mouth_outline(w, h, sag, lift, asym, r, dz)
+    return _mouth_outline(w, h, sag, lift, asym, r, dz,
+                          wave=params.get("wave", 0.0), dx=params.get("dx", 0.0))
 
 def _compute_lip_band_coords(shape_name):
     """Return two lists: inner loop coords and outer loop coords (world space) for the lip band."""
@@ -640,6 +659,10 @@ def build_mouth():
             "vU": "v_U",
             "vMBP": "v_MBP",
             "vFV": "v_FV",
+            "wail": "m_wail",
+            "wavy": "m_wavy",
+            "flat_side": "m_flat_side",
+            "smirk_tight": "m_smirk_tight",
         }
         ctrl_name = control_map[shape_name]
         drive_key(lip_obj, f"S_{shape_name}", ctrl_name, [ctrl_name])
@@ -716,7 +739,7 @@ def build_mouth():
         push_y = 0.03 if is_closed else 0.0
         new_coords = []
         for v in basis_teeth_coords:
-            nx = FACE_X + (v.x - FACE_X) * scale_x
+            nx = FACE_X + params.get("dx", 0.0) + (v.x - FACE_X) * scale_x
             ny = v.y + push_y
             nz = v.z + dz_trans
             # For vFV, lower by 0.012
@@ -772,7 +795,7 @@ def build_mouth():
         push_y = 0.045 if is_closed else 0.0
         new_coords = []
         for v in basis_tongue_coords:
-            nx = v.x
+            nx = v.x + params.get("dx", 0.0)
             ny = v.y + push_y
             nz = v.z + dz_trans
             new_coords.append(Vector((nx, ny, nz)))
@@ -997,30 +1020,30 @@ def build_props():
     # Sweat drop
     cx = FACE_X + 0.33
     cz = hoop_z(0.29) + 0.05
-    obj = outline_patch("Prop_Sweat", _drop_pts(0.028, 0.075), cx, cz, 3, None, subsurf=False)
+    obj = outline_patch("Prop_Sweat", _drop_pts(0.045, 0.115), cx, cz, 3, None, subsurf=False)
     drive_hidden(obj, "prop_sweat <= 0.5", ["prop_sweat"])
     new_objects.append(obj)
     # Tears
     for side in ("Left", "Right"):
         outer = 1 if side == "Left" else -1
-        cx = eye_x(side) + outer * 0.06
-        cz = EYE_Z - 0.13
+        cx = eye_x(side) + outer * 0.075   # lower outer eye corner
+        cz = EYE_Z - 0.115
         # stream rows
         rows = []
-        for offset in (-0.016, 0.0, 0.016):
+        for offset in (-0.026, 0.0, 0.026):
             row = []
             for i in range(16):
                 v = -0.13 * (i / 15)
-                u_base = outer * 0.03 + 0.006 * math.sin(v * 20)
-                row.append((u_base + offset, v))
+                u_base = outer * (0.03 + 0.25 * -v) + 0.008 * math.sin(v * 30)
+                row.append((u_base + offset * (1.0 + 0.5 * i / 15), v))  # river widens as it flows
             rows.append(row)
         stream = strip_patch(f"Prop_Tear_{side}", rows, cx, cz, 3, None)
         drive_hidden(stream, "prop_tears <= 0.5", ["prop_tears"])
         new_objects.append(stream)
         # drop at end
-        drop_cx = cx + outer * 0.03  # under the stream, which runs at u = outer*0.03
+        drop_cx = cx + outer * (0.03 + 0.25 * 0.13)  # at the end of the stream
         drop_cz = cz - 0.15
-        drop = outline_patch(f"Prop_TearDrop_{side}", _drop_pts(0.022, 0.05),
+        drop = outline_patch(f"Prop_TearDrop_{side}", _drop_pts(0.034, 0.075),
                               drop_cx, drop_cz, 3, None, subsurf=False)
         drive_hidden(drop, "prop_tears <= 0.5", ["prop_tears"])
         new_objects.append(drop)
@@ -1052,11 +1075,11 @@ def _props_materials(lookdev, mats):
     mapping = {
         "Blush_Left": ("MAT_Satin_Blush", "#F07C9A", 30),
         "Blush_Right": ("MAT_Satin_Blush", "#F07C9A", 30),
-        "Prop_Sweat": ("MAT_Satin_Water", "#A8DDF5", 80),
-        "Prop_Tear_Left": ("MAT_Satin_Water", "#A8DDF5", 80),
-        "Prop_Tear_Right": ("MAT_Satin_Water", "#A8DDF5", 80),
-        "Prop_TearDrop_Left": ("MAT_Satin_Water", "#A8DDF5", 80),
-        "Prop_TearDrop_Right": ("MAT_Satin_Water", "#A8DDF5", 80),
+        "Prop_Sweat": ("MAT_Satin_Sweat", "#7FC8F2", 80),
+        "Prop_Tear_Left": ("MAT_Satin_Tear", "#D8F2FF", 90),
+        "Prop_Tear_Right": ("MAT_Satin_Tear", "#D8F2FF", 90),
+        "Prop_TearDrop_Left": ("MAT_Satin_Tear", "#D8F2FF", 90),
+        "Prop_TearDrop_Right": ("MAT_Satin_Tear", "#D8F2FF", 90),
         "Prop_Star_Left": ("MAT_Satin_Star", "#FFC93C", 45),
         "Prop_Star_Right": ("MAT_Satin_Star", "#FFC93C", 45),
         "Prop_Heart_Left": ("MAT_Satin_Heart", "#E2324F", 45),
@@ -1079,7 +1102,22 @@ def _props_materials(lookdev, mats):
         obj.data.materials.clear()
         obj.data.materials.append(mat)
 
+def _glossy_water(lookdev, mats):
+    """Tears and sweat read as glossy embroidery: smoother thread with a clear coat."""
+    for name in ("MAT_Satin_Tear", "MAT_Satin_Sweat"):
+        m = mats.get(name)
+        if m is None:
+            continue
+        b = m.node_tree.nodes.get("Principled BSDF")
+        if b is None:
+            b = next(n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+        b.inputs["Roughness"].default_value = 0.15
+        if "Coat Weight" in b.inputs:
+            b.inputs["Coat Weight"].default_value = 0.7
+
+
 RIG_MATERIAL_HOOKS.append(_props_materials)
+RIG_MATERIAL_HOOKS.append(_glossy_water)
 # <<< SECTION props
 
 PRESETS = {}  # filled by the presets section: name -> {control: value}
@@ -1087,26 +1125,28 @@ PRESETS = {}  # filled by the presets section: name -> {control: value}
 # >>> SECTION presets
 # Expression presets (authored in review): Face_Ctrl values; unlisted controls stay at default.
 PRESETS.update({
-    "Happy": dict(m_big_smile=0.7, m_teeth=0.3, eye_wide=0.1, brow_raise_L=0.3, brow_raise_R=0.3, cheek_puff=0.2),
-    "Big laugh": dict(m_laugh=1.0, m_teeth=0.6, happy_L=1, happy_R=1, brow_raise_L=0.5, brow_raise_R=0.5, cheek_puff=0.4),
-    "Wink": dict(blink_L=1.0, m_smirk_L=0.8, brow_raise_R=0.4, look_x=0.4),
-    "Grateful": dict(closed_smile=1, m_small_smile=1.0, brow_sad=0.4, blush=1, cheek_puff=0.3),
-    "Excited": dict(prop_stars=1, m_laugh=0.8, m_teeth=0.5, brow_raise_L=0.7, brow_raise_R=0.7),
-    "Love": dict(prop_hearts=1, m_big_smile=0.8, blush=1, brow_raise_L=0.3, brow_raise_R=0.3),
-    "Proud": dict(closed_smile=1, m_smirk_L=0.7, brow_raise_L=0.3, brow_raise_R=0.3, cheek_puff=0.2),
-    "Surprised": dict(eye_wide=1.0, pupil_size=-0.4, brow_raise_L=1.0, brow_raise_R=1.0, m_O=0.8),
-    "Shocked": dict(eye_wide=1.0, pupil_size=-1.0, brow_raise_L=1.0, brow_raise_R=1.0, m_shout=1.0, m_teeth=0.3),
-    "Thinking": dict(look_x=-1.0, look_y=1.0, brow_raise_L=0.9, brow_lower=0.3, m_smirk_R=0.6, m_flat=0.3),
-    "Confused": dict(prop_dizzy=1, brow_raise_L=0.8, brow_sad=0.3, m_smirk_R=0.5, m_O=0.3),
-    "Shy": dict(blush=1, look_x=-0.8, look_y=-0.6, pupil_size=0.3, brow_sad=0.4, m_small_smile=0.8),
-    "Embarrassed": dict(prop_sweat=1, blush=0.6, m_big_smile=0.4, m_teeth=1.0, brow_sad=0.6, squint_L=0.2, squint_R=0.2),
-    "Worried": dict(brow_sad=1.0, m_frown=0.6, eye_wide=0.3, look_x=0.5, pupil_size=-0.3),
-    "Sad": dict(brow_sad=1.0, m_frown=1.0, look_y=-1.0, blink_L=0.3, blink_R=0.3, pupil_size=0.4),
-    "Crying": dict(prop_tears=1, brow_sad=1.0, squint_L=0.8, squint_R=0.8, m_shout=0.6, look_y=-0.5),
-    "Annoyed": dict(blink_L=0.45, blink_R=0.45, brow_angry=0.5, m_flat=1.0, look_x=0.7),
-    "Determined": dict(brow_angry=0.9, squint_L=0.4, squint_R=0.4, m_smirk_L=0.5, m_flat=0.5, cheek_puff=0.1),
-    "Sleepy": dict(blink_L=0.7, blink_R=0.7, brow_sad=0.3, m_pout=0.6, look_y=-0.3),
-    "Calm": dict(closed_smile=1, m_small_smile=0.7),
+    "Happy": dict(m_big_smile=0.85, m_teeth=0.3, eye_wide=0.15, brow_raise_L=0.45, brow_raise_R=0.45, cheek_puff=0.3),
+    "Big laugh": dict(m_laugh=1.0, m_teeth=0.6, m_tongue_out=0.25, happy_L=1, happy_R=1,
+                      brow_raise_L=0.6, brow_raise_R=0.6, cheek_puff=0.5),
+    "Wink": dict(blink_L=1.0, m_smirk_L=1.0, brow_raise_R=0.6, brow_lower=0.2, look_x=0.4),
+    "Grateful": dict(closed_smile=1, m_small_smile=1.0, brow_sad=0.5, blush=1, cheek_puff=0.3),
+    "Excited": dict(prop_stars=1, m_laugh=0.9, m_teeth=0.5, brow_raise_L=0.9, brow_raise_R=0.9),
+    "Love": dict(prop_hearts=1, m_big_smile=0.9, blush=1, brow_raise_L=0.4, brow_raise_R=0.4),
+    "Proud": dict(closed_smile=1, m_smirk_L=0.9, brow_raise_L=0.5, brow_raise_R=0.5, cheek_puff=0.3),
+    "Surprised": dict(eye_wide=1.0, pupil_size=-0.4, brow_raise_L=1.0, brow_raise_R=1.0, m_O=0.7),
+    "Shocked": dict(eye_wide=1.0, pupil_size=-1.0, brow_raise_L=1.0, brow_raise_R=1.0, brow_furrow=0.2, m_O=1.0),
+    "Thinking": dict(look_x=1.0, look_y=1.0, brow_raise_L=1.0, brow_angry=0.25, m_flat_side=1.0),
+    "Confused": dict(prop_dizzy=1, brow_raise_L=1.0, brow_sad=0.4, m_wavy=1.0),
+    "Shy": dict(blush=1, look_x=-0.8, look_y=-0.6, pupil_size=0.3, brow_sad=0.6, m_small_smile=0.8),
+    "Embarrassed": dict(prop_sweat=1, blush=0.7, m_big_smile=0.5, m_teeth=1.0, brow_sad=0.8,
+                        squint_L=0.2, squint_R=0.2),
+    "Worried": dict(eye_wide=0.8, pupil_size=-0.8, brow_sad=1.0, brow_furrow=0.35, m_wavy=1.0, look_x=0.4),
+    "Sad": dict(brow_sad=1.0, m_frown=1.0, look_y=-1.0, blink_L=0.35, blink_R=0.35, lid_flat=0.4, pupil_size=0.3),
+    "Crying": dict(prop_tears=1, brow_sad=1.0, squint_L=0.8, squint_R=0.8, m_wail=1.0, look_y=-0.5),
+    "Annoyed": dict(lid_flat=1.0, brow_angry=0.8, brow_furrow=0.3, m_flat_side=1.0, look_x=0.7),
+    "Determined": dict(brow_angry=1.0, brow_furrow=0.5, squint_L=0.35, squint_R=0.35, m_smirk_tight=1.0, cheek_puff=0.15),
+    "Sleepy": dict(blink_L=0.7, blink_R=0.7, brow_sad=0.35, m_pout=0.6, look_y=-0.3),
+    "Calm": dict(closed_smile=1, m_small_smile=0.8, brow_raise_L=0.2, brow_raise_R=0.2),
 })
 # <<< SECTION presets
 
