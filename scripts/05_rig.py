@@ -863,11 +863,11 @@ HAND_POSES = {
         "ring": (0.0, 0.6),
         "thumb": (0.0, 0.0),  # thumb curl, spread not used for thumb
     },
-    "ok_sign": {
-        "index": (0.85, 0.3),
+    "ok_sign": {  # palm to camera: index and thumb bend sideways into a circle that faces the camera
+        "index": (0.15, 0.3, -1.0),
         "middle": (0.05, 0.3),
         "ring": (0.1, 0.3),
-        "thumb": (0.75, 0.0),
+        "thumb": (0.1, 0.0, -1.0),
     },
     "thumbs_up": {
         "index": (1.0, 0.0),
@@ -901,7 +901,9 @@ def apply_hand_pose(side, pose_name):
     if pose_name not in HAND_POSES:
         return
     pose = HAND_POSES[pose_name]
-    for finger, (curl, spread) in pose.items():
+    for finger, values in pose.items():
+        curl, spread = values[0], values[1]
+        rig[f"side_{finger}.{side}"] = values[2] if len(values) > 2 else 0.0
         # Set curl
         rig[f"curl_{finger}.{side}"] = curl
         # Set spread (only for non-thumb)
@@ -965,6 +967,25 @@ def place_ik_hand(rig, side, pos, local_axis=None, angle_deg=0.0, hand_scale=1.0
     bpy.context.view_layer.update()
 
 
+def pose_hand(rig, side, pos, fingers_dir, palm_dir, hand_scale=1.0):
+    """IK-place a hand at world `pos` aimed by world directions: fingers_dir = where the fingers
+    point (hand bone Y), palm_dir = where the palm faces (hand bone Z = palm normal).
+    Examples (R = character right, -X): wave/please-wait palm to camera = fingers (0,0,1), palm (0,-1,0);
+    thumbs-up R = fingers (-0.82,0,0.57), palm (0,-1,0) (mirror X for L); palms up = palm (0,0,1)."""
+    y = Vector(fingers_dir).normalized()
+    z = Vector(palm_dir)
+    z = (z - z.dot(y) * y).normalized()
+    x = y.cross(z)
+    rot = Matrix((x, y, z)).transposed()  # columns X, Y, Z
+    rig[f"ik_fk.{side}"] = 1.0
+    m = rot.to_4x4()
+    m.translation = Vector(pos)
+    bpy.context.view_layer.update()
+    rig.pose.bones[f"IK_hand.{side}"].matrix = m
+    rig.pose.bones[f"hand.{side}"].scale = (hand_scale,) * 3
+    bpy.context.view_layer.update()
+
+
 def rest_arm_visible(rig, root_z=0.0):
     """Sticker poses: bring the resting left hand out from behind the body."""
     place_ik_hand(rig, "L", (0.72, -0.2, HIP_Z + 0.06 + root_z))
@@ -1006,12 +1027,6 @@ def set_pose(name):
         face_ctrl["blink_L"] = 1.0
     elif name == "ok_sign":
         apply_hand_pose("R", "ok_sign")
-        # palm toward the camera; index and thumb bend toward each other in the palm plane so the
-        # circle faces the camera (the curl axis only bends toward the palm, i.e. edge-on)
-        rig["side_index.R"] = -1.0
-        rig["side_thumb.R"] = -1.0  # negative bends the thumb up toward the index (checked in close-up renders)
-        rig["curl_index.R"] = 0.15
-        rig["curl_thumb.R"] = 0.1
         place_ik_hand(rig, "R", (-0.88, -0.28, SHOULDER_Z + 0.22), hand_scale=1.35)
         rest_arm_visible(rig)
         face_ctrl = bpy.data.objects.get("Face_Ctrl")
