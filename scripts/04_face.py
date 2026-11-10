@@ -399,7 +399,8 @@ def build_eyes():
         drive_key(brow, "Angry", "brow_angry", ["brow_angry"])
         # Sad (inner up)
         angle_sad = inner_sign * math.radians(40)  # inner end up
-        sad_fn = lambda co: xz_move(0, 0.015)(xz_rotate(px, pz, angle_sad)(co))
+        # flatten the arch first so the tilt reads as "/ \" (inner ends clearly above the outer ends)
+        sad_fn = lambda co: xz_move(0, 0.015)(xz_rotate(px, pz, angle_sad)(Vector((co.x, co.y, pz + (co.z - pz) * 0.3))))
         add_shape_key(brow, "Sad", sad_fn)
         drive_key(brow, "Sad", "brow_sad", ["brow_sad"])
         # Furrow / scrunch: pulled toward the nose, lowered and flattened
@@ -477,7 +478,7 @@ def _mouth_outline(w, h, sag=0.0, lift=0.0, asym=0.0, r=0.5, dz=0.0, n=48, wave=
 MOUTH_SHAPES = {
     "rest": dict(w=MOUTH_W, h=MOUTH_H),
     "small_smile": dict(w=0.24, h=0.014, lift=0.035, dz=-0.012),
-    "big_smile": dict(w=0.32, h=0.10, lift=0.04),
+    "big_smile": dict(w=0.30, h=0.10, lift=0.028),  # corners clear the eye-outline bottoms
     "laugh": dict(w=0.34, h=0.112, lift=0.04, r=0.4),
     "O": dict(w=0.13, h=0.11, sag=-0.018, dz=-0.004),
     "flat": dict(w=0.20, h=0.012, dz=-0.012),
