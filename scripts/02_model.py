@@ -1296,7 +1296,7 @@ def build_face(mats):
         shrink.offset = 0.002 + 0.004 * layer
 
         solidify = obj.modifiers.new("Solidify", 'SOLIDIFY')
-        solidify.thickness = 0.0015
+        solidify.thickness = 0.0032  # thicker patch; subdivision rounds the rim into a puffy stitched edge
         solidify.offset = 1.0
         solidify.use_even_offset = True
 
@@ -1447,12 +1447,13 @@ def build_face(mats):
     # ------------------------------------------------------------------------
     # Mouth
     # ------------------------------------------------------------------------
-    mouth_top_z = hoop_z(0.44) - 0.05
+    # mouth lowered (review v2) so it clears the eye outlines; eye-outline bottom is hoop44 - 0.096
+    mouth_top_z = hoop_z(0.44) - 0.108
     mouth_x = FACE_X
     mouth_objects = []
 
     # Outline (larger D, top edge 0.0075 higher)
-    outline_fn = _d_shape(0.235, 0.12)
+    outline_fn = _d_shape(0.235, 0.095)
     obj = _patch(
         "Mouth_Outline",
         outline_fn,
@@ -1463,7 +1464,7 @@ def build_face(mats):
     mouth_objects.append(obj)
 
     # Inside (dark)
-    inside_fn = _d_shape(0.22, 0.11)
+    inside_fn = _d_shape(0.22, 0.085)  # shallower so the mouth clears the wordmark below
     obj = _patch(
         "Mouth",
         inside_fn,
@@ -1486,8 +1487,8 @@ def build_face(mats):
     mouth_objects.append(obj)
 
     # Tongue (ellipse)
-    tongue_fn = _ellipse(0.10, 0.045)
-    tongue_z = mouth_top_z - 0.085
+    tongue_fn = _ellipse(0.09, 0.035)
+    tongue_z = mouth_top_z - 0.062
     obj = _patch(
         "Tongue",
         tongue_fn,
@@ -1508,10 +1509,10 @@ def build_face(mats):
     for v in bm_nose.verts:
         v.co.normalize()  # unit sphere
     # Scale and translate
-    nose_radius = 0.04
+    nose_radius = 0.03  # 25% smaller (review v2)
     nose_x = FACE_X
-    nose_z = hoop_z(0.44)
-    nose_y = -(HOOP_MAJOR + HOOP_MINOR) - 0.03
+    nose_z = mouth_top_z + 0.036  # sits just above the mouth, between the lower eye curves
+    nose_y = -(bulge_radius(nose_z) + 0.025)
     for v in bm_nose.verts:
         v.co = v.co * nose_radius
         v.co += Vector((nose_x, nose_y, nose_z))
@@ -1610,9 +1611,9 @@ def build_logo(mats):
     curve_data.dimensions = "2D"
     curve_data.fill_mode = "BOTH"
     curve_data.resolution_u = 3
-    curve_data.extrude = 0.0008
-    curve_data.bevel_depth = 0.0003
-    curve_data.bevel_resolution = 1
+    curve_data.extrude = 0.0012
+    curve_data.bevel_depth = 0.0008  # small rounded bevel on the letter edges
+    curve_data.bevel_resolution = 2
 
     for curve in trace["word"]:
         segments = curve["segs"]
@@ -1722,14 +1723,17 @@ def build_logo(mats):
 
     for v in me.vertices:
         x, y, zl = v.co
-        v.co = _conform(x, y, zl + 0.0008)
+        v.co = _conform(x, y, zl + 0.002)  # zl spans -(extrude+bevel)..+(extrude+bevel)
 
     word_obj = bpy.data.objects.new("Logo_Wordmark", me)
     bpy.context.scene.collection.objects.link(word_obj)
     word_obj.parent = bpy.data.objects[ROOT_NAME]
     me.materials.append(mats["M_Gold"])
     for p in me.polygons:
-        p.use_smooth = False
+        p.use_smooth = True
+    # smooth letter faces (the wrap made flat facets) but keep crisp edges at the bevel
+    if hasattr(me, "set_sharp_from_angle"):
+        me.set_sharp_from_angle(angle=math.radians(35))
 
     # ------------------------------------------------------------------------
     # 2. Badge ring (rolled fabric)

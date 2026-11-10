@@ -36,7 +36,8 @@ def hex_lin(h):
 # ----------------------------------------------------------------------
 
 def create_fleece(name, hex_color, sheen=0.6, rough=0.9,
-                 velvet_strength=0.25, velvet_scale=180):
+                 velvet_strength=0.25, velvet_scale=180,
+                 pile_scale=35, sheen_tint_mix=0.3):
     """Create a fleece-like material with crushed velvet normal."""
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
@@ -46,11 +47,11 @@ def create_fleece(name, hex_color, sheen=0.6, rough=0.9,
 
     # Output
     output = nodes.new(type='ShaderNodeOutputMaterial')
-    output.location = (600, 0)
+    output.location = (1200, 0)
 
     # Principled BSDF
     bsdf = nodes.new(type='ShaderNodeBsdfPrincipled')
-    bsdf.location = (300, 0)
+    bsdf.location = (900, 0)
     links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
 
     # Base Color with variation
@@ -59,11 +60,11 @@ def create_fleece(name, hex_color, sheen=0.6, rough=0.9,
 
     # Texture Coordinate and Noise for color variation (low freq)
     tex_coord = nodes.new(type='ShaderNodeTexCoord')
-    tex_coord.location = (-800, 200)
+    tex_coord.location = (-1200, 300)
 
     noise_low = nodes.new(type='ShaderNodeTexNoise')
-    noise_low.location = (-600, 200)
-    noise_low.inputs['Scale'].default_value = velvet_scale * 0.2
+    noise_low.location = (-1000, 300)
+    noise_low.inputs['Scale'].default_value = pile_scale * 0.2
     noise_low.inputs['Detail'].default_value = 2
     noise_low.inputs['Roughness'].default_value = 0.65
     links.new(tex_coord.outputs['Object'], noise_low.inputs['Vector'])
@@ -71,70 +72,153 @@ def create_fleece(name, hex_color, sheen=0.6, rough=0.9,
     # Mix factor = noise * 0.5
     mix_factor = nodes.new(type='ShaderNodeMath')
     mix_factor.operation = 'MULTIPLY'
-    mix_factor.location = (-400, 200)
+    mix_factor.location = (-800, 300)
     mix_factor.inputs[1].default_value = 0.5
     links.new(noise_low.outputs['Fac'], mix_factor.inputs[0])
 
     # Color mix
     mix_color = nodes.new(type='ShaderNodeMixRGB')
-    mix_color.location = (-200, 0)
+    mix_color.location = (-600, 0)
     mix_color.blend_type = 'MIX'
     mix_color.inputs['Color1'].default_value = base_dark
     mix_color.inputs['Color2'].default_value = base_color
     links.new(mix_factor.outputs['Value'], mix_color.inputs['Fac'])
-    links.new(mix_color.outputs['Color'], bsdf.inputs['Base Color'])
 
-    # Sheen tint: mix base with white 70% toward white
+    # ---- Crushed velvet pile pattern ----
+    # Noise A (domain warp)
+    noise_a = nodes.new(type='ShaderNodeTexNoise')
+    noise_a.location = (-1200, -200)
+    noise_a.inputs['Scale'].default_value = pile_scale
+    noise_a.inputs['Detail'].default_value = 4
+    noise_a.inputs['Roughness'].default_value = 0.55
+    noise_a.inputs['Distortion'].default_value = 2.5
+    links.new(tex_coord.outputs['Object'], noise_a.inputs['Vector'])
+
+    # Vector Math: (Noise A color - 0.5) * 0.04
+    subtract_vec = nodes.new(type='ShaderNodeVectorMath')
+    subtract_vec.operation = 'SUBTRACT'
+    subtract_vec.location = (-1000, -200)
+    subtract_vec.inputs[1].default_value = (0.5, 0.5, 0.5)
+    links.new(noise_a.outputs['Color'], subtract_vec.inputs[0])
+
+    scale_vec = nodes.new(type='ShaderNodeVectorMath')
+    scale_vec.operation = 'SCALE'
+    scale_vec.location = (-800, -200)
+    scale_vec.inputs['Scale'].default_value = 0.04
+    links.new(subtract_vec.outputs['Vector'], scale_vec.inputs[0])
+
+    add_vec = nodes.new(type='ShaderNodeVectorMath')
+    add_vec.operation = 'ADD'
+    add_vec.location = (-600, -200)
+    links.new(tex_coord.outputs['Object'], add_vec.inputs[0])
+    links.new(scale_vec.outputs['Vector'], add_vec.inputs[1])
+
+    # Noise B (warped high-frequency)
+    noise_b = nodes.new(type='ShaderNodeTexNoise')
+    noise_b.location = (-400, -200)
+    noise_b.inputs['Scale'].default_value = pile_scale * 1.6
+    noise_b.inputs['Detail'].default_value = 8
+    noise_b.inputs['Roughness'].default_value = 0.6
+    links.new(add_vec.outputs['Vector'], noise_b.inputs['Vector'])
+
+    # Color Ramp for pile height
+    ramp = nodes.new(type='ShaderNodeValToRGB')
+    ramp.location = (-200, -200)
+    ramp.color_ramp.interpolation = 'EASE'
+    # Remove default two stops and add custom
+    ramp.color_ramp.elements[0].position = 0.35
+    ramp.color_ramp.elements[0].color = (0, 0, 0, 1)
+    ramp.color_ramp.elements[1].position = 0.65
+    ramp.color_ramp.elements[1].color = (1, 1, 1, 1)
+    links.new(noise_b.outputs['Fac'], ramp.inputs['Fac'])
+
+    # Fine fibre noise
+    noise_c = nodes.new(type='ShaderNodeTexNoise')
+    noise_c.location = (-400, -500)
+    noise_c.inputs['Scale'].default_value = 900
+    noise_c.inputs['Detail'].default_value = 2
+    links.new(tex_coord.outputs['Object'], noise_c.inputs['Vector'])
+
+    mult_fibre = nodes.new(type='ShaderNodeMath')
+    mult_fibre.operation = 'MULTIPLY'
+    mult_fibre.location = (-200, -500)
+    mult_fibre.inputs[1].default_value = 0.15
+    links.new(noise_c.outputs['Fac'], mult_fibre.inputs[0])
+
+    # Final pile = ramp + fibre
+    add_pile = nodes.new(type='ShaderNodeMath')
+    add_pile.operation = 'ADD'
+    add_pile.location = (0, -200)
+    links.new(ramp.outputs['Color'], add_pile.inputs[0])
+    links.new(mult_fibre.outputs['Value'], add_pile.inputs[1])
+
+    # Bump
+    bump = nodes.new(type='ShaderNodeBump')
+    bump.location = (200, -200)
+    bump.inputs['Strength'].default_value = velvet_strength
+    bump.inputs['Distance'].default_value = 0.003
+    links.new(add_pile.outputs['Value'], bump.inputs['Height'])
+    if 'Normal' in bsdf.inputs:
+        links.new(bump.outputs['Normal'], bsdf.inputs['Normal'])
+
+    # Pile modulates colour: darker in crushed areas
+    # Factor = (1 - pile) * 0.6
+    one_minus_pile = nodes.new(type='ShaderNodeMath')
+    one_minus_pile.operation = 'SUBTRACT'
+    one_minus_pile.location = (400, -100)
+    one_minus_pile.inputs[0].default_value = 1.0
+    links.new(add_pile.outputs['Value'], one_minus_pile.inputs[1])
+
+    mult_dark = nodes.new(type='ShaderNodeMath')
+    mult_dark.operation = 'MULTIPLY'
+    mult_dark.location = (600, -100)
+    mult_dark.inputs[1].default_value = 0.6
+    links.new(one_minus_pile.outputs['Value'], mult_dark.inputs[0])
+
+    # Darker base = base * 0.72
+    dark_base = tuple(c * 0.72 for c in base_color[:3]) + (1.0,)
+    mix_dark = nodes.new(type='ShaderNodeMixRGB')
+    mix_dark.location = (800, 0)
+    mix_dark.blend_type = 'MIX'
+    mix_dark.inputs['Color1'].default_value = base_color  # will be replaced by mix_color output? Actually we want to mix between existing mix_color and dark_base
+    mix_dark.inputs['Color2'].default_value = dark_base
+    links.new(mix_color.outputs['Color'], mix_dark.inputs['Color1'])
+    links.new(mult_dark.outputs['Value'], mix_dark.inputs['Fac'])
+    links.new(mix_dark.outputs['Color'], bsdf.inputs['Base Color'])
+
+    # Sheen Weight driven by pile: map range pile 0..1 -> sheen*0.7 .. sheen*1.2
+    map_range = nodes.new(type='ShaderNodeMapRange')
+    map_range.location = (400, -300)
+    map_range.inputs['From Min'].default_value = 0.0
+    map_range.inputs['From Max'].default_value = 1.0
+    map_range.inputs['To Min'].default_value = sheen * 0.7
+    map_range.inputs['To Max'].default_value = sheen * 1.2
+    map_range.clamp = True
+    links.new(add_pile.outputs['Value'], map_range.inputs['Value'])
+    if 'Sheen Weight' in bsdf.inputs:
+        links.new(map_range.outputs['Result'], bsdf.inputs['Sheen Weight'])
+
+    # Sheen tint: mix base with white by sheen_tint_mix
     tint_mix = nodes.new(type='ShaderNodeMixRGB')
-    tint_mix.location = (-200, -300)
+    tint_mix.location = (600, -400)
     tint_mix.blend_type = 'MIX'
     tint_mix.inputs['Color1'].default_value = base_color
     tint_mix.inputs['Color2'].default_value = (1, 1, 1, 1)
-    tint_mix.inputs['Fac'].default_value = 0.3  # light tint of the base colour; 0.7 washed the blue out
-    links.new(tint_mix.outputs['Color'], bsdf.inputs['Sheen Tint'])
+    tint_mix.inputs['Fac'].default_value = sheen_tint_mix
+    if 'Sheen Tint' in bsdf.inputs:
+        links.new(tint_mix.outputs['Color'], bsdf.inputs['Sheen Tint'])
 
     # Set Principled values
     if 'Roughness' in bsdf.inputs:
         bsdf.inputs['Roughness'].default_value = rough
     if 'Specular IOR Level' in bsdf.inputs:
-        bsdf.inputs['Specular IOR Level'].default_value = 0.25
-    if 'Sheen Weight' in bsdf.inputs:
-        bsdf.inputs['Sheen Weight'].default_value = sheen
+        bsdf.inputs['Specular IOR Level'].default_value = 0.2
     if 'Sheen Roughness' in bsdf.inputs:
-        bsdf.inputs['Sheen Roughness'].default_value = 0.4
-
-    # Crushed velvet normal: two noises multiplied -> bump
-    noise_high = nodes.new(type='ShaderNodeTexNoise')
-    noise_high.location = (-600, -200)
-    noise_high.inputs['Scale'].default_value = velvet_scale
-    noise_high.inputs['Detail'].default_value = 6
-    noise_high.inputs['Roughness'].default_value = 0.65
-    links.new(tex_coord.outputs['Object'], noise_high.inputs['Vector'])
-
-    noise_low2 = nodes.new(type='ShaderNodeTexNoise')
-    noise_low2.location = (-600, -400)
-    noise_low2.inputs['Scale'].default_value = velvet_scale * 0.2
-    noise_low2.inputs['Detail'].default_value = 2
-    noise_low2.inputs['Roughness'].default_value = 0.65
-    links.new(tex_coord.outputs['Object'], noise_low2.inputs['Vector'])
-
-    mult = nodes.new(type='ShaderNodeMath')
-    mult.operation = 'MULTIPLY'
-    mult.location = (-400, -200)
-    links.new(noise_high.outputs['Fac'], mult.inputs[0])
-    links.new(noise_low2.outputs['Fac'], mult.inputs[1])
-
-    bump = nodes.new(type='ShaderNodeBump')
-    bump.location = (0, -200)
-    bump.inputs['Strength'].default_value = velvet_strength
-    bump.inputs['Distance'].default_value = 0.0015
-    links.new(mult.outputs['Value'], bump.inputs['Height'])
-    if 'Normal' in bsdf.inputs:
-        links.new(bump.outputs['Normal'], bsdf.inputs['Normal'])
+        bsdf.inputs['Sheen Roughness'].default_value = 0.3
 
     return mat
 
-def create_satin(name, hex_color, angle_deg, stitch_scale=550, aniso=0.6):
+def create_satin(name, hex_color, angle_deg, stitch_scale=350, aniso=0.5):
     """Create satin/embroidery thread material."""
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
@@ -143,36 +227,37 @@ def create_satin(name, hex_color, angle_deg, stitch_scale=550, aniso=0.6):
     nodes.clear()
 
     output = nodes.new(type='ShaderNodeOutputMaterial')
-    output.location = (600, 0)
+    output.location = (800, 0)
 
     bsdf = nodes.new(type='ShaderNodeBsdfPrincipled')
-    bsdf.location = (300, 0)
+    bsdf.location = (500, 0)
     links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
 
     # Base color
     base_color = hex_lin(hex_color)
     bsdf.inputs['Base Color'].default_value = base_color
 
-    # Roughness, anisotropic, sheen
+    # Determine luminance for dark/light thread settings
+    lum = 0.2126 * base_color[0] + 0.7152 * base_color[1] + 0.0722 * base_color[2]
+    is_dark = lum < 0.05
+
+    # Set BSDF parameters
     if 'Roughness' in bsdf.inputs:
-        bsdf.inputs['Roughness'].default_value = 0.35
+        bsdf.inputs['Roughness'].default_value = 0.8 if is_dark else 0.45
     if 'Anisotropic' in bsdf.inputs:
-        bsdf.inputs['Anisotropic'].default_value = aniso
+        bsdf.inputs['Anisotropic'].default_value = 0.5
     if 'Anisotropic Rotation' in bsdf.inputs:
         bsdf.inputs['Anisotropic Rotation'].default_value = angle_deg / 360.0
-    # dark threads: little sheen, tinted with their own colour, so black stays black
-    lum = 0.2126 * base_color[0] + 0.7152 * base_color[1] + 0.0722 * base_color[2]
     if 'Sheen Weight' in bsdf.inputs:
-        bsdf.inputs['Sheen Weight'].default_value = 0.3 if lum > 0.3 else 0.1
+        bsdf.inputs['Sheen Weight'].default_value = 0.12 if is_dark else 0.45
     if 'Sheen Tint' in bsdf.inputs:
         bsdf.inputs['Sheen Tint'].default_value = base_color
-    if lum < 0.05:  # black thread: matte so pupils don't mirror the bright studio
-        if 'Roughness' in bsdf.inputs:
-            bsdf.inputs['Roughness'].default_value = 0.75
-        if 'Specular IOR Level' in bsdf.inputs:
-            bsdf.inputs['Specular IOR Level'].default_value = 0.25
+    if 'Sheen Roughness' in bsdf.inputs:
+        bsdf.inputs['Sheen Roughness'].default_value = 0.35
+    if 'Specular IOR Level' in bsdf.inputs:
+        bsdf.inputs['Specular IOR Level'].default_value = 0.2 if is_dark else 0.35
 
-    # Stitch normal: Texture Coordinate -> Mapping -> Wave -> Bump -> Normal
+    # Stitch normal: Texture Coordinate -> Mapping -> Wave -> Power -> + fibre noise -> Bump
     tex_coord = nodes.new(type='ShaderNodeTexCoord')
     tex_coord.location = (-800, 0)
 
@@ -185,17 +270,44 @@ def create_satin(name, hex_color, angle_deg, stitch_scale=550, aniso=0.6):
     wave.location = (-400, 0)
     wave.wave_type = 'BANDS'
     wave.bands_direction = 'X'
+    wave.wave_profile = 'SIN'
     wave.inputs['Scale'].default_value = stitch_scale
-    wave.inputs['Distortion'].default_value = 1.5
-    wave.inputs['Detail'].default_value = 2
+    wave.inputs['Distortion'].default_value = 0.6
+    wave.inputs['Detail'].default_value = 1
     wave.inputs['Detail Scale'].default_value = 1.0
     links.new(mapping.outputs['Vector'], wave.inputs['Vector'])
 
+    # Power 0.5 for rounded thread cross-section
+    power = nodes.new(type='ShaderNodeMath')
+    power.operation = 'POWER'
+    power.location = (-200, 0)
+    power.inputs[1].default_value = 0.5
+    links.new(wave.outputs['Fac'], power.inputs[0])
+
+    # Fibre detail noise
+    noise_fibre = nodes.new(type='ShaderNodeTexNoise')
+    noise_fibre.location = (-400, -300)
+    noise_fibre.inputs['Scale'].default_value = 2500
+    noise_fibre.inputs['Detail'].default_value = 1
+    links.new(mapping.outputs['Vector'], noise_fibre.inputs['Vector'])
+
+    mult_fibre = nodes.new(type='ShaderNodeMath')
+    mult_fibre.operation = 'MULTIPLY'
+    mult_fibre.location = (-200, -300)
+    mult_fibre.inputs[1].default_value = 0.1
+    links.new(noise_fibre.outputs['Fac'], mult_fibre.inputs[0])
+
+    add_height = nodes.new(type='ShaderNodeMath')
+    add_height.operation = 'ADD'
+    add_height.location = (0, 0)
+    links.new(power.outputs['Value'], add_height.inputs[0])
+    links.new(mult_fibre.outputs['Value'], add_height.inputs[1])
+
     bump = nodes.new(type='ShaderNodeBump')
-    bump.location = (0, 0)
-    bump.inputs['Strength'].default_value = 0.35
-    bump.inputs['Distance'].default_value = 0.0008
-    links.new(wave.outputs['Fac'], bump.inputs['Height'])
+    bump.location = (200, 0)
+    bump.inputs['Strength'].default_value = 1.0
+    bump.inputs['Distance'].default_value = 0.0012
+    links.new(add_height.outputs['Value'], bump.inputs['Height'])
     if 'Normal' in bsdf.inputs:
         links.new(bump.outputs['Normal'], bsdf.inputs['Normal'])
 
@@ -210,61 +322,90 @@ def create_gold_thread(name, angle_deg):
     nodes.clear()
 
     output = nodes.new(type='ShaderNodeOutputMaterial')
-    output.location = (800, 0)
+    output.location = (1000, 0)
 
     bsdf = nodes.new(type='ShaderNodeBsdfPrincipled')
-    bsdf.location = (500, 0)
+    bsdf.location = (700, 0)
     links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
 
-    # Metallic
+    # Metallic settings
     if 'Metallic' in bsdf.inputs:
         bsdf.inputs['Metallic'].default_value = 1.0
     if 'Roughness' in bsdf.inputs:
-        bsdf.inputs['Roughness'].default_value = 0.3
+        bsdf.inputs['Roughness'].default_value = 0.32
     if 'Anisotropic' in bsdf.inputs:
-        bsdf.inputs['Anisotropic'].default_value = 0.7
+        bsdf.inputs['Anisotropic'].default_value = 0.6
     if 'Anisotropic Rotation' in bsdf.inputs:
         bsdf.inputs['Anisotropic Rotation'].default_value = angle_deg / 360.0
 
-    # Texture Coordinate -> Mapping -> Wave (for color variation)
+    # Texture Coordinate -> Mapping -> Wave (for color variation and bump)
     tex_coord = nodes.new(type='ShaderNodeTexCoord')
-    tex_coord.location = (-600, 200)
+    tex_coord.location = (-800, 0)
 
     mapping = nodes.new(type='ShaderNodeMapping')
-    mapping.location = (-400, 200)
+    mapping.location = (-600, 0)
     mapping.inputs['Rotation'].default_value = (0, math.radians(angle_deg), 0)
     links.new(tex_coord.outputs['Object'], mapping.inputs['Vector'])
 
     wave = nodes.new(type='ShaderNodeTexWave')
-    wave.location = (-200, 200)
+    wave.location = (-400, 0)
     wave.wave_type = 'BANDS'
     wave.bands_direction = 'X'
-    wave.inputs['Scale'].default_value = 550
-    wave.inputs['Distortion'].default_value = 1.5
-    wave.inputs['Detail'].default_value = 2
+    wave.wave_profile = 'SIN'
+    wave.inputs['Scale'].default_value = 350
+    wave.inputs['Distortion'].default_value = 0.6
+    wave.inputs['Detail'].default_value = 1
     wave.inputs['Detail Scale'].default_value = 1.0
     links.new(mapping.outputs['Vector'], wave.inputs['Vector'])
 
+    # Factor = wave^2 for color mix
+    wave_sq = nodes.new(type='ShaderNodeMath')
+    wave_sq.operation = 'POWER'
+    wave_sq.location = (-200, 0)
+    wave_sq.inputs[1].default_value = 2.0
+    links.new(wave.outputs['Fac'], wave_sq.inputs[0])
+
     # Mix between two golds
-    # Metallic reflectance colours chosen so the RENDER reads as brand gold #D5B268..#EED295:
-    # a metal's base colour is its reflectance, and the bright warm studio + AgX bleached the
-    # brand hex values to cream, so use richer, more saturated golds here.
-    color1 = hex_lin("#C2902F")
-    color2 = hex_lin("#DDB25A")
+    color1 = hex_lin("#A86C05")  # input golds pre-compensated for AgX so the render reads ~#C9962E
+    color2 = hex_lin("#D49A1C")  # ... with highlights toward ~#F0D27A
     mix_color = nodes.new(type='ShaderNodeMixRGB')
     mix_color.location = (0, 0)
     mix_color.blend_type = 'MIX'
     mix_color.inputs['Color1'].default_value = color1
     mix_color.inputs['Color2'].default_value = color2
-    links.new(wave.outputs['Fac'], mix_color.inputs['Fac'])
+    links.new(wave_sq.outputs['Value'], mix_color.inputs['Fac'])
     links.new(mix_color.outputs['Color'], bsdf.inputs['Base Color'])
 
-    # Also add stitch normal (similar to satin)
+    # Raised stitch bump (same as satin but strength 0.9, distance 0.001)
+    power = nodes.new(type='ShaderNodeMath')
+    power.operation = 'POWER'
+    power.location = (0, -200)
+    power.inputs[1].default_value = 0.5
+    links.new(wave.outputs['Fac'], power.inputs[0])
+
+    noise_fibre = nodes.new(type='ShaderNodeTexNoise')
+    noise_fibre.location = (-400, -300)
+    noise_fibre.inputs['Scale'].default_value = 2500
+    noise_fibre.inputs['Detail'].default_value = 1
+    links.new(mapping.outputs['Vector'], noise_fibre.inputs['Vector'])
+
+    mult_fibre = nodes.new(type='ShaderNodeMath')
+    mult_fibre.operation = 'MULTIPLY'
+    mult_fibre.location = (-200, -300)
+    mult_fibre.inputs[1].default_value = 0.1
+    links.new(noise_fibre.outputs['Fac'], mult_fibre.inputs[0])
+
+    add_height = nodes.new(type='ShaderNodeMath')
+    add_height.operation = 'ADD'
+    add_height.location = (200, -200)
+    links.new(power.outputs['Value'], add_height.inputs[0])
+    links.new(mult_fibre.outputs['Value'], add_height.inputs[1])
+
     bump = nodes.new(type='ShaderNodeBump')
-    bump.location = (200, -200)
-    bump.inputs['Strength'].default_value = 0.35
-    bump.inputs['Distance'].default_value = 0.0008
-    links.new(wave.outputs['Fac'], bump.inputs['Height'])
+    bump.location = (400, -200)
+    bump.inputs['Strength'].default_value = 0.9
+    bump.inputs['Distance'].default_value = 0.001
+    links.new(add_height.outputs['Value'], bump.inputs['Height'])
     if 'Normal' in bsdf.inputs:
         links.new(bump.outputs['Normal'], bsdf.inputs['Normal'])
 
@@ -461,7 +602,7 @@ def set_render_settings(args):
     except:
         scene.view_settings.view_transform = 'Standard'
         scene.view_settings.look = 'None'
-    scene.view_settings.exposure = -0.8  # keeps the royal blue deep and the whites from clipping
+    scene.view_settings.exposure = -0.5  # changed from -0.8
 
     # Resolution
     scene.render.resolution_x = args.res
@@ -550,47 +691,100 @@ def set_camera_view(view_name):
 # Fur setup
 # ----------------------------------------------------------------------
 
+def _set(obj, attr, value):
+    """Set obj.attr only if this Blender version has it (particle settings differ between versions)."""
+    if hasattr(obj, attr):
+        setattr(obj, attr, value)
+    else:
+        print(f"[03] note: {type(obj).__name__}.{attr} not available, skipped")
+
+
 def setup_fur(enabled):
-    """Enable or disable fur for close-up views."""
-    objects_for_fur = ["Body", "Lid_Top", "Hoop_29", "Hoop_44", "Hoop_76", "Hoop_97"]
-    try:
-        for obj_name in objects_for_fur:
-            if obj_name not in bpy.data.objects:
-                continue
-            obj = bpy.data.objects[obj_name]
-            # Check if particle system already exists
-            psys = None
-            for mod in obj.modifiers:
-                if mod.type == 'PARTICLE_SYSTEM':
-                    psys = mod.particle_system
-                    break
-            if psys is None:
-                # Create new particle system
-                obj.modifiers.new("Fur", type='PARTICLE_SYSTEM')
-                psys = obj.modifiers["Fur"].particle_system
-                psys.settings = bpy.data.particles.new("FurSettings")
-                settings = psys.settings
-                settings.type = 'HAIR'
-                settings.count = 60000 if obj_name in ["Body", "Lid_Top"] else 8000
-                settings.hair_length = 0.0025
-                settings.use_advanced_hair = True
-                settings.child_type = 'INTERPOLATED'
-                settings.rendered_child_count = 12
-                settings.child_length = 1.0
-                settings.roughness_2 = 0.004
-                settings.root_radius = 0.00012
-                settings.tip_radius = 0.0
-                settings.radius_scale = 1.0  # width = root_radius * radius_scale (default 0.01 would be ~1 micron)
-                # Assign material (the object's own material)
-                if obj.data.materials:
-                    settings.material = len(obj.data.materials) - 1
-            # Toggle render visibility
-            obj.modifiers["Fur"].show_render = enabled
-        # Set curves shape if available
-        if hasattr(bpy.context.scene, 'cycles_curves'):
-            bpy.context.scene.cycles_curves.shape = 'THICK'
-    except Exception as e:
-        print(f"Warning: could not set up fur particles: {e}")
+    """Create fur particle systems for plush objects if enabled."""
+    if not enabled:
+        return
+
+    objects_for_fur = [
+        "Body", "Lid_Top", "Lid_Rim",
+        "Hoop_29", "Hoop_44", "Hoop_76", "Hoop_97",
+        "Arm_Left", "Arm_Right", "Leg_Left", "Leg_Right",
+        "Glove_Left_Palm", "Glove_Right_Palm",
+        "Glove_Left_Cuff", "Glove_Right_Cuff",
+        "Shoe_Left", "Shoe_Right"
+    ]
+
+    scene = bpy.context.scene
+
+    for obj_name in objects_for_fur:
+        if obj_name not in bpy.data.objects:
+            continue
+        obj = bpy.data.objects[obj_name]
+        if obj.type != 'MESH':
+            continue
+
+        # Check if particle system already exists
+        psys = None
+        for mod in obj.modifiers:
+            if mod.type == 'PARTICLE_SYSTEM':
+                psys = mod.particle_system
+                break
+
+        if psys is None:
+            # Create new particle system
+            obj.modifiers.new("Fur", type='PARTICLE_SYSTEM')
+            psys = obj.modifiers["Fur"].particle_system
+            psys.settings = bpy.data.particles.new("FurSettings")
+
+        settings = psys.settings
+        _set(settings, 'type', 'HAIR')
+
+        # Compute area from polygons (local space, assuming scale=1)
+        area_m2 = sum(p.area for p in obj.data.polygons)
+        count = int(area_m2 * 9000)
+        if count < 300:
+            count = 300
+        _set(settings, 'count', count)
+
+        _set(settings, 'use_advanced_hair', True)
+        _set(settings, 'emit_from', 'FACE')
+        _set(settings, 'use_even_distribution', True)
+        # random direction: factor_random is an absolute velocity, so keep it in mm
+        _set(settings, 'factor_random', 0.0018)
+        # hair_length is stored through normal_factor, so set it LAST (after any velocity settings)
+        _set(settings, 'hair_length', 0.0045)
+
+        _set(settings, 'child_type', 'INTERPOLATED')
+        _set(settings, 'rendered_child_count', 20)
+        _set(settings, 'child_length', 1.0)
+
+        _set(settings, 'clump_factor', 0.45)
+        _set(settings, 'clump_shape', -0.2)
+
+        _set(settings, 'roughness_1', 0.002)
+        _set(settings, 'roughness_1_size', 0.6)
+        _set(settings, 'roughness_2', 0.0015)
+        _set(settings, 'roughness_endpoint', 0.0008)
+
+        _set(settings, 'root_radius', 0.00009)
+        _set(settings, 'tip_radius', 0.00002)
+        _set(settings, 'radius_scale', 1.0)
+
+        _set(settings, 'display_step', 2)
+        _set(settings, 'render_step', 3)
+
+        # Material slot (object's only material, index 1)
+        _set(settings, 'material', 1)
+
+        # Ensure modifier is visible in render
+        obj.modifiers["Fur"].show_render = True
+
+    # Set scene hair settings if available
+    if hasattr(scene.render, 'hair_type'):
+        scene.render.hair_type = 'STRAND'
+    if hasattr(scene.render, 'hair_subdiv'):
+        scene.render.hair_subdiv = 2
+    if hasattr(scene, 'cycles_curves'):
+        scene.cycles_curves.shape = 'THICK'
 
 # ----------------------------------------------------------------------
 # Main
@@ -634,11 +828,18 @@ def main():
     # ------------------------------------------------------------------
     print("Creating materials...")
     # Fleece materials
-    mat_body = create_fleece("MAT_Fleece_Blue", "#1A3AAE", sheen=0.4)  # less sheen keeps the royal blue deep
-    mat_hoop = create_fleece("MAT_Fleece_Blue_Hoop", "#16329A", sheen=0.4, velvet_strength=0.2)
-    mat_navy = create_fleece("MAT_Fleece_Navy", "#101629", sheen=0.5)
-    mat_plush_white = create_fleece("MAT_Plush_White", "#F2EFEA", sheen=0.8, rough=0.95,
-                                    velvet_strength=0.4, velvet_scale=120)
+    mat_body = create_fleece("MAT_Fleece_Blue", "#020B69", sheen=0.85,
+                             pile_scale=35, velvet_strength=0.7,
+                             sheen_tint_mix=0.05)
+    mat_hoop = create_fleece("MAT_Fleece_Blue_Hoop", "#010858", sheen=0.85,
+                             pile_scale=40, velvet_strength=0.7,
+                             sheen_tint_mix=0.05)
+    mat_navy = create_fleece("MAT_Fleece_Navy", "#101629", sheen=0.7,
+                             pile_scale=45, velvet_strength=0.6,
+                             sheen_tint_mix=0.3)
+    mat_plush_white = create_fleece("MAT_Plush_White", "#F2EFEA", sheen=0.9,
+                                    pile_scale=28, velvet_strength=0.8,
+                                    sheen_tint_mix=0.3)
 
     # Satin materials
     satin_white = create_satin("MAT_Satin_White", "#F4F2EE", 35)
@@ -648,8 +849,8 @@ def main():
     satin_pupil = create_satin("MAT_Satin_Black_Pupil", "#0B0B0D", 20)
     satin_brow = create_satin("MAT_Satin_Black_Brow", "#0B0B0D", 0)
     satin_mouth_outline = create_satin("MAT_Satin_Black_MouthOutline", "#0B0B0D", 90)
-    satin_mouth = create_satin("MAT_Satin_Mouth", "#4A1410", 10, aniso=0.3)
-    satin_tongue = create_satin("MAT_Satin_Tongue", "#C0504D", 60, aniso=0.3)
+    satin_mouth = create_satin("MAT_Satin_Mouth", "#4A1410", 10)
+    satin_tongue = create_satin("MAT_Satin_Tongue", "#C0504D", 60)
 
     # Gold thread
     gold_wordmark = create_gold_thread("MAT_Gold_Wordmark", 0)
@@ -657,8 +858,9 @@ def main():
     satin_badge_ring = create_satin("MAT_Satin_BadgeRing", "#F4F2EE", 90)
 
     # Nose felt
-    mat_felt = create_fleece("MAT_Felt", "#0C0C0E", sheen=0.35, rough=1.0,
-                             velvet_strength=0.35, velvet_scale=260)
+    mat_felt = create_fleece("MAT_Felt", "#0C0C0E", sheen=0.35,
+                             pile_scale=220, velvet_strength=0.4,
+                             sheen_tint_mix=0.3)
 
     # Assign materials to objects
     print("Assigning materials...")
@@ -723,6 +925,13 @@ def main():
     set_render_settings(parsed)
 
     # ------------------------------------------------------------------
+    # Fur setup (once, before rendering any views)
+    # ------------------------------------------------------------------
+    if not parsed.no_fur:
+        print("Setting up fur...")
+        setup_fur(True)
+
+    # ------------------------------------------------------------------
     # Render views
     # ------------------------------------------------------------------
     views = [v.strip() for v in parsed.views.split(',') if v.strip()]
@@ -732,11 +941,6 @@ def main():
         print(f"Rendering view: {view}")
         # Set camera
         set_camera_view(view)
-        # Fur toggling: only for face and logo, unless --no-fur
-        if not parsed.no_fur and view in ['face', 'logo']:
-            setup_fur(True)
-        else:
-            setup_fur(False)
 
         # Render
         scene = bpy.context.scene
@@ -745,10 +949,6 @@ def main():
         bpy.ops.render.render(write_still=True)
         end = time.perf_counter()
         print(f"[03] view {view} {end - start:.1f}s")
-
-        # Disable fur after rendering close-ups
-        if not parsed.no_fur and view in ['face', 'logo']:
-            setup_fur(False)
 
     total_end = time.perf_counter()
     print(f"[03] total {total_end - total_start:.1f}s")
