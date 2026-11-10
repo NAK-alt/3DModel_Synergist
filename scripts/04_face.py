@@ -99,6 +99,7 @@ CONTROLS = {
     "brow_raise_L": (0.0, 0.0, 1.0), "brow_raise_R": (0.0, 0.0, 1.0),
     "brow_lower": (0.0, 0.0, 1.0), "brow_angry": (0.0, 0.0, 1.0), "brow_sad": (0.0, 0.0, 1.0),
     "brow_furrow": (0.0, 0.0, 1.0),
+    "brow_short": (0.0, 0.0, 1.0),                                 # shorter, flatter brows
     "lid_flat": (0.0, 0.0, 1.0),                                   # flat-top half lids (annoyed)
     # mouth shapes
     "m_small_smile": (0.0, 0.0, 1.0), "m_big_smile": (0.0, 0.0, 1.0), "m_laugh": (0.0, 0.0, 1.0),
@@ -406,6 +407,9 @@ def build_eyes():
         # Furrow / scrunch: pulled toward the nose, lowered and flattened
         furrow_fn = lambda co: Vector((co.x - inner_sign * -0.022, co.y, pz - 0.015 + (co.z - pz) * 0.6))
         add_shape_key(brow, "Furrow", furrow_fn)
+        # Short: shorter and flatter, so raised brows do not repeat the happy eye arcs
+        add_shape_key(brow, "Short", xz_scale(px, pz, 0.7, 0.5))
+        drive_key(brow, "Short", "brow_short", ["brow_short"])
         drive_key(brow, "Furrow", "brow_furrow", ["brow_furrow"])
 
         # --- Hide open eye when replaced by arcs/props ---
@@ -1128,7 +1132,7 @@ PRESETS = {}  # filled by the presets section: name -> {control: value}
 PRESETS.update({
     "Happy": dict(m_big_smile=0.85, m_teeth=0.3, eye_wide=0.15, brow_raise_L=0.45, brow_raise_R=0.45, cheek_puff=0.3),
     "Big laugh": dict(m_laugh=1.0, m_teeth=0.6, m_tongue_out=0.25, happy_L=1, happy_R=1,
-                      brow_raise_L=0.6, brow_raise_R=0.6, cheek_puff=0.5),
+                      brow_raise_L=1.0, brow_raise_R=1.0, brow_short=1.0, cheek_puff=0.5),
     "Wink": dict(blink_L=1.0, m_smirk_L=1.0, brow_raise_R=0.6, brow_lower=0.2, look_x=0.4),
     "Grateful": dict(closed_smile=1, m_small_smile=1.0, brow_sad=0.5, blush=1, cheek_puff=0.3),
     "Excited": dict(prop_stars=1, m_laugh=0.9, m_teeth=0.5, brow_raise_L=0.9, brow_raise_R=0.9),

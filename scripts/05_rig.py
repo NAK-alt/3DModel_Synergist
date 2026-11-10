@@ -546,13 +546,19 @@ def add_constraints_and_drivers(rig):
                        [{'name': f'curl_{finger}.{side}', 'type': 'SINGLE_PROP',
                          'targets': [{'id_type': 'OBJECT', 'id': rig, 'data_path': f'["curl_{finger}.{side}"]'}]}],
                        target_object=rig)
-            # Spread driver only on first bone
-            if finger != "thumb":
-                add_driver(bone1, "rotation_euler", 2,
-                           f'spread.{side} * radians({spread_angle})',
-                           [{'name': f'spread.{side}', 'type': 'SINGLE_PROP',
-                             'targets': [{'id_type': 'OBJECT', 'id': rig, 'data_path': f'["spread.{side}"]'}]}],
-                           target_object=rig)
+            # Spread + sideways bend on the first bone, sideways bend on the second.
+            # Bone Z = palm normal: negative side bends the finger toward the thumb (+X of the hand).
+            rig[f"side_{finger}.{side}"] = 0.0
+            rig.id_properties_ui(f"side_{finger}.{side}").update(min=-1.0, max=1.0, soft_min=-1.0, soft_max=1.0)
+            side_var = {'name': f'side_{finger}.{side}', 'type': 'SINGLE_PROP',
+                        'targets': [{'id_type': 'OBJECT', 'id': rig, 'data_path': f'["side_{finger}.{side}"]'}]}
+            spread_var = {'name': f'spread.{side}', 'type': 'SINGLE_PROP',
+                          'targets': [{'id_type': 'OBJECT', 'id': rig, 'data_path': f'["spread.{side}"]'}]}
+            add_driver(bone1, "rotation_euler", 2,
+                       f'spread.{side} * radians({spread_angle}) + side_{finger}.{side} * radians(55)',
+                       [spread_var, side_var], target_object=rig)
+            add_driver(bone2, "rotation_euler", 2,
+                       f'side_{finger}.{side} * radians(75)', [side_var], target_object=rig)
 
     # --- Hand poses data ---
     # HAND_POSES defined later; no need here
@@ -858,10 +864,10 @@ HAND_POSES = {
         "thumb": (0.0, 0.0),  # thumb curl, spread not used for thumb
     },
     "ok_sign": {
-        "index": (0.75, 0.3),
+        "index": (0.85, 0.3),
         "middle": (0.05, 0.3),
         "ring": (0.1, 0.3),
-        "thumb": (0.65, 0.0),
+        "thumb": (0.75, 0.0),
     },
     "thumbs_up": {
         "index": (1.0, 0.0),
@@ -917,7 +923,7 @@ def reset_pose():
             rig[prop] = 0.0
         elif prop.startswith("curl"):
             rig[prop] = 0.0
-        elif prop.startswith("spread"):
+        elif prop.startswith("spread") or prop.startswith("side_"):
             rig[prop] = 0.0
         elif prop == "use_eye_target":
             rig[prop] = 0.0
@@ -936,6 +942,34 @@ def reset_pose():
     # Force update
     bpy.context.view_layer.update()
 
+SHOULDER_Z = model02.SHOULDER_Z
+HIP_Z = model02.HIP_Z
+
+
+def place_ik_hand(rig, side, pos, local_axis=None, angle_deg=0.0, hand_scale=1.0):
+    """Switch the arm to IK and put the hand at `pos` (world) with the hand's REST orientation,
+    optionally turned by angle_deg about one of the hand bone's own axes (local_axis, e.g. (0, 0, 1)
+    = palm normal, (0, 1, 0) = along the fingers). The hand copies IK_hand's rotation in IK mode."""
+    rig[f"ik_fk.{side}"] = 1.0
+    rest = rig.data.bones[f"hand.{side}"].matrix_local.copy()
+    rot = rest.to_3x3()
+    if local_axis is not None and angle_deg:
+        axis = (rot @ Vector(local_axis)).normalized()
+        rot = Matrix.Rotation(math.radians(angle_deg), 3, axis) @ rot
+    m = rot.to_4x4()
+    m.translation = Vector(pos)
+    bpy.context.view_layer.update()
+    rig.pose.bones[f"IK_hand.{side}"].matrix = m
+    if hand_scale != 1.0:
+        rig.pose.bones[f"hand.{side}"].scale = (hand_scale,) * 3
+    bpy.context.view_layer.update()
+
+
+def rest_arm_visible(rig, root_z=0.0):
+    """Sticker poses: bring the resting left hand out from behind the body."""
+    place_ik_hand(rig, "L", (0.72, -0.2, HIP_Z + 0.06 + root_z))
+
+
 def set_bone_world_location(rig, bone_name, world_pos):
     """Move a pose bone so its head sits at world_pos (armature at the origin, so armature space = world)."""
     pb = rig.pose.bones[bone_name]
@@ -945,6 +979,10 @@ def set_bone_world_location(rig, bone_name, world_pos):
     pb.matrix = m
 
 
+OK_TWIST_DEG = 90.0
+THUMB_TURN_DEG = 55.0  # tuned by close-up renders: 90 tilts the thumb ~40 deg outward, 125 lays it flat
+
+
 def set_pose(name):
     """Apply a test pose by name."""
     rig = bpy.data.objects["Mascot_Rig"]
@@ -952,26 +990,30 @@ def set_pose(name):
     if name == "wave":
         apply_hand_pose("R", "open_wave")
         rig["lean_side"] = 0.15
+        rest_arm_visible(rig)
         face_ctrl = bpy.data.objects.get("Face_Ctrl")
         face_ctrl["m_big_smile"] = 0.8
         face_ctrl["brow_raise_L"] = 0.4
         face_ctrl["brow_raise_R"] = 0.4
     elif name == "thumbs_up":
         apply_hand_pose("R", "thumbs_up")
-        # turn the hand 90 deg about the palm normal (bone Z): the thumb, which points toward the body
-        # (+X) in the wave pose, then points up and the curled fingers point outward
-        hand_r = rig.pose.bones["hand.R"]
-        hand_r.rotation_mode = 'XYZ'
-        hand_r.rotation_euler[2] = math.radians(90)
-        # Rotate forearm.R forward-up
-        forearm = rig.pose.bones["forearm.R"]
-        forearm.rotation_mode = 'XYZ'
-        forearm.rotation_euler[0] = math.radians(35)  # +35 brings the hand forward (-35 swung it behind the arm)
+        # fist held out at shoulder height; turning 90 deg about the palm normal makes the thumb
+        # (which points toward the body in the wave pose) point straight up, palm toward the camera
+        place_ik_hand(rig, "R", (-0.9, -0.28, SHOULDER_Z + 0.12), (0, 0, 1), THUMB_TURN_DEG, hand_scale=1.35)
+        rest_arm_visible(rig)
         face_ctrl = bpy.data.objects.get("Face_Ctrl")
         face_ctrl["m_smirk_L"] = 0.9
         face_ctrl["blink_L"] = 1.0
     elif name == "ok_sign":
         apply_hand_pose("R", "ok_sign")
+        # palm toward the camera; index and thumb bend toward each other in the palm plane so the
+        # circle faces the camera (the curl axis only bends toward the palm, i.e. edge-on)
+        rig["side_index.R"] = -1.0
+        rig["side_thumb.R"] = -1.0  # negative bends the thumb up toward the index (checked in close-up renders)
+        rig["curl_index.R"] = 0.15
+        rig["curl_thumb.R"] = 0.1
+        place_ik_hand(rig, "R", (-0.88, -0.28, SHOULDER_Z + 0.22), hand_scale=1.35)
+        rest_arm_visible(rig)
         face_ctrl = bpy.data.objects.get("Face_Ctrl")
         face_ctrl["closed_smile"] = 1.0
         face_ctrl["m_small_smile"] = 1.0
@@ -993,6 +1035,9 @@ def set_pose(name):
         face_ctrl["m_laugh"] = 1.0
         face_ctrl["happy_L"] = 1.0
         face_ctrl["happy_R"] = 1.0
+        face_ctrl["brow_raise_L"] = 1.0
+        face_ctrl["brow_raise_R"] = 1.0
+        face_ctrl["brow_short"] = 1.0
     bpy.context.view_layer.update()
 
 # ----------------------------------------------------------------
@@ -1008,11 +1053,12 @@ def render_pose(name, args):
         if c.type == 'TRACK_TO':
             c.target = look_target
     if name == "jump":
-        look_target.location = (0, 0, 1.3)
+        look_target.location = (0, 0, 1.35)
     else:
-        look_target.location = (0, 0, 1.0)
-    cam.location = (-2.2, -5.2, 1.35)  # front three-quarter on the waving side, face stays readable
-    cam.data.lens = 55
+        look_target.location = (-0.08, 0, 1.05)
+    # sticker camera: mostly front, body turned ~10 deg toward the waving side, whole character in frame
+    cam.location = (-1.05, -5.9, 1.3)
+    cam.data.lens = 50
     bpy.context.scene.render.resolution_x = args.res
     bpy.context.scene.render.resolution_y = args.res
     bpy.context.scene.render.resolution_percentage = 100
