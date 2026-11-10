@@ -19,7 +19,7 @@ SHOE_LENGTH = 0.45
 SHOE_FORWARD = 0.1    # shift toe forward (-Y)
 
 ARM_RADIUS = 0.035
-SHOULDER_FROM_TOP = 0.4  # 40% from top
+SHOULDER_FROM_TOP = 0.5  # updated to 50% from top
 HIP_FROM_TOP = 0.8       # 80% from top
 
 # Hoop positions (measured from top) - updated percentages
@@ -33,30 +33,45 @@ LID_RIM_MINOR_R = 0.055  # updated
 LID_DISC_RADIUS = 0.48   # unused? we use ellipsoid
 LID_DISC_SCALE_Z = 0.08  # unused? we use ellipsoid
 
-# Face
-EYE_SPACING = 0.24      # center to center (old, but we override with new values)
-EYE_SCLERA_WIDTH = 0.12 # old, will be overridden
-EYE_SCLERA_HEIGHT = 0.16 # old
-EYE_FLATTEN_Y = 0.02
-PUPIL_SCALE = 0.4
-MOUTH_WIDTH = 0.2
-MOUTH_HEIGHT = 0.05
-MOUTH_FLATTEN_Y = 0.02
+# Face - updated dimensions
+FACE_X = 0.03            # whole face shifted slightly to viewer's right
+EYE_W = 0.20
+EYE_H = 0.30
+EYE_DEPTH = 0.06
+EYE_SPACING = 0.14       # distance from FACE_X to eye centre (full size)
+EYE_FLATTEN_Y = 0.02     # not used directly, but kept for reference
+PUPIL_W = 0.11
+PUPIL_H = 0.15
+PUPIL_DEPTH = 0.04
+MOUTH_WIDTH = 0.22
+MOUTH_HEIGHT = 0.11
+MOUTH_FLATTEN_Y = 0.02   # not used
+TEETH_WIDTH = 0.16
+TEETH_HEIGHT = 0.03
+TEETH_DEPTH = 0.02
+TONGUE_W = 0.10
+TONGUE_H = 0.04
+TONGUE_DEPTH = 0.02
 
-# Logo placeholder (old, will be replaced with three pieces)
-LOGO_WIDTH = 0.45
-LOGO_HEIGHT = 0.25
-LOGO_FLATTEN_Y = 0.05
+# Logo
+LOGO_X = 0.04            # centred slightly right
+LOGO_WIDTH = 0.46        # word bar width
+LOGO_HEIGHT = 0.07       # word bar height
+LOGO_GAP = 0.03          # gap between stacked bars
+BADGE_MAJOR_R = 0.11
+BADGE_MINOR_R = 0.018
+BADGE_SPHERE_R = 0.035
 
 # Materials (hex sRGB)
-COL_BODY = "#1F3FB8"
-COL_HOOP = "#1F3FB8"     # will be multiplied by 0.85
+COL_BODY = "#1A3AAE"     # updated
+COL_HOOP = "#1A3AAE"     # will be multiplied by 0.85
 COL_ARMS_LEGS = "#101629"
 COL_WHITE = "#F2F2F2"
 COL_BLACK = "#0A0A0A"
 COL_GOLD = "#D5B268"
 COL_GOLD_LIGHT = "#EED295"  # added
-COL_MOUTH_IN = "#2A0A0A"    # added
+COL_MOUTH_IN = "#4A1410"    # updated dark red-brown
+COL_TONGUE = "#C0504D"      # added
 
 BULGE = 0.015          # body bulge amount
 
@@ -241,6 +256,67 @@ def add_glove(side, arm_points, mat):
         objs.append(f)
     return objs
 
+def add_open_hand(side, arm_points, mat):
+    """Open palm with spread fingers, facing camera (-Y)."""
+    end = mathutils.Vector(arm_points[-1])
+    d = (end - mathutils.Vector(arm_points[-2])).normalized()
+    # Cuff torus oriented along arm direction
+    rot_cuff = d.to_track_quat('Z', 'Y').to_euler()
+    cuff = add_torus(f"Glove_{side}_Cuff", major_radius=0.055, minor_radius=0.025,
+                     location=end, rotation_euler=rot_cuff, material=mat)
+    objs = [cuff]
+    # Palm centre: 0.10 beyond wrist along arm direction
+    palm_c = end + d * 0.10
+    # Palm ellipsoid, full size (0.17 wide, 0.06 deep, 0.16 tall), facing -Y (no yaw to arm)
+    palm = add_ellipsoid(f"Glove_{side}_Palm", (0.17, 0.06, 0.16), palm_c, mat)
+    objs.append(palm)
+    # Fingers: capsule-like ellipsoids, fanned upward from palm's top edge
+    # Angles from vertical (rotate about Y): -30, -10, 10, 30 degrees
+    finger_angles = [-math.radians(30), -math.radians(10), math.radians(10), math.radians(30)]
+    for i, ang in enumerate(finger_angles):
+        # Base at top of palm: palm centre z + palm height/2
+        base_z = palm_c.z + 0.08  # half of 0.16
+        # Offset along X from palm centre based on angle and spacing
+        # Use approximate: fingers positioned at palm top edge, spread horizontally
+        # We'll place them along the top edge with offsets: -0.06, -0.02, 0.02, 0.06
+        x_off = -0.06 + i * 0.04
+        # Position finger base at (palm_c.x + x_off, palm_c.y, base_z)
+        finger_base = mathutils.Vector((palm_c.x + x_off, palm_c.y, base_z))
+        # Rotate about Y by ang: direction vector initially +Z, rotate about Y
+        dir_vec = mathutils.Vector((0, 0, 1))
+        rot_mat = mathutils.Matrix.Rotation(ang, 4, 'Y')
+        dir_vec = rot_mat @ dir_vec
+        # Finger centre = base + dir_vec * (finger length/2)
+        finger_len = 0.10  # full size
+        finger_centre = finger_base + dir_vec * (finger_len / 2.0)
+        # Finger ellipsoid: (0.045, 0.04, 0.10) but oriented? We'll set rotation to align with dir_vec.
+        # Use rotation_euler from a quaternion that rotates +Z to dir_vec
+        quat = mathutils.Vector((0,0,1)).rotation_difference(dir_vec).to_euler()
+        finger = add_ellipsoid(f"Glove_{side}_Finger{i+1}", (0.045, 0.04, finger_len), finger_centre, mat)
+        finger.rotation_euler = quat
+        objs.append(finger)
+    # Thumb: (0.045 x 0.04 x 0.08) pointing out sideways at 70 degrees toward the outside
+    # Outside depends on side: for left hand (character's left, +X) outside is +X? Actually thumb points outward, away from palm.
+    # We'll assume side "Left" means +X side, "Right" means -X side.
+    if side == "Left":
+        outward_sign = 1
+    else:
+        outward_sign = -1
+    # Thumb base at side of palm, lower part: palm_c.x + outward_sign * (palm_width/2), z near palm bottom
+    thumb_base = mathutils.Vector((palm_c.x + outward_sign * 0.08, palm_c.y, palm_c.z - 0.05))
+    # Angle 70 degrees from vertical, rotated about Y: direction vector initially (1,0,0) rotated about Y by 70 deg? Or from vertical?
+    # "pointing out sideways at 70 degrees toward the outside" - likely from vertical, rotated outward.
+    # We'll create direction vector: start with +Z, rotate about Y by 70 degrees, then also rotate about Z to point outward? Simpler: use quaternion from +Z to direction that is mostly +Z with some X component.
+    # We'll define direction as (outward_sign * sin(70°), 0, cos(70°))
+    dir_vec_thumb = mathutils.Vector((outward_sign * math.sin(math.radians(70)), 0, math.cos(math.radians(70))))
+    thumb_len = 0.08
+    thumb_centre = thumb_base + dir_vec_thumb * (thumb_len / 2.0)
+    quat_thumb = mathutils.Vector((0,0,1)).rotation_difference(dir_vec_thumb).to_euler()
+    thumb = add_ellipsoid(f"Glove_{side}_Thumb", (0.045, 0.04, thumb_len), thumb_centre, mat)
+    thumb.rotation_euler = quat_thumb
+    objs.append(thumb)
+    return objs
+
 def add_bezier_curve(name, points, radius, material=None):
     """Create a 3D bezier curve with bevel_depth (tube)."""
     curve_data = bpy.data.curves.new(name, type='CURVE')
@@ -351,7 +427,11 @@ def main():
     root.location = (0, 0, 0)
 
     # ---- Materials ----
-    mat_body = make_material("M_Body", COL_BODY, roughness=0.8)
+    mat_body = make_material("M_Body", COL_BODY, roughness=0.85)  # updated roughness
+    # Lower specular if input exists
+    if "Specular IOR Level" in mat_body.node_tree.nodes["Principled BSDF"].inputs:
+        mat_body.node_tree.nodes["Principled BSDF"].inputs["Specular IOR Level"].default_value = 0.2
+
     mat_hoop = make_material("M_Hoop", COL_HOOP, roughness=0.8)
     # Darken hoop: multiply base color by 0.85
     mat_hoop.node_tree.nodes["Principled BSDF"].inputs['Base Color'].default_value = tuple(c * 0.85 for c in srgb_to_linear(COL_HOOP)[:3]) + (1.0,)
@@ -361,6 +441,7 @@ def main():
     mat_gold = make_material("M_Gold", COL_GOLD, roughness=0.35, metallic=0.6)
     mat_gold_light = make_material("M_GoldLight", COL_GOLD_LIGHT, roughness=0.35, metallic=0.6)
     mat_mouth_in = make_material("M_MouthIn", COL_MOUTH_IN, roughness=0.5)
+    mat_tongue = make_material("M_Tongue", COL_TONGUE, roughness=0.4)
 
     # ---- Body positions ----
     shoe_top_z = SHOE_HEIGHT  # 0.2
@@ -370,17 +451,12 @@ def main():
     body_top_z = body_bottom_z + BODY_H  # 0.4142 + 1.26 = 1.6742
 
     # ---- Body (lathe mesh with bulge) ----
-    # Generate profile points (z, radius) from bottom to top.
-    # Boundaries include bottom, top, and hoop z positions.
     hoop_z_list = [body_top_z - pct * BODY_H for pct in HOOP_PERCENTS]  # top to bottom order
-    # sort all boundaries ascending (bottom to top)
     boundaries = sorted([body_bottom_z, body_top_z] + hoop_z_list)
-    # create profile points every ~0.01
     z = body_bottom_z
     profile = []
     step = 0.01
     while z <= body_top_z + 1e-6:
-        # find segment index
         seg_idx = 0
         for i in range(len(boundaries)-1):
             if boundaries[i] <= z <= boundaries[i+1]:
@@ -395,7 +471,6 @@ def main():
         r = BODY_R + BULGE * math.sin(math.pi * t)
         profile.append((z, r))
         z += step
-    # ensure top point included
     if abs(profile[-1][0] - body_top_z) > 1e-4:
         profile.append((body_top_z, BODY_R))
 
@@ -438,21 +513,19 @@ def main():
     hoop44_z = body_top_z - 0.44 * BODY_H
     band_height = 0.15 * BODY_H  # height between hoops
 
-    # Eyes: white sclera with black outline behind, pupils shifted
-    eye_width = 0.15
-    eye_height = band_height - 0.01  # 0.15*1.26 - 0.01 = 0.189 - 0.01 = 0.179
-    eye_depth = 0.04
-    eye_z = (hoop29_z + hoop44_z) / 2.0
-    eye_x = 0.095
+    # Eyes: much bigger
+    eye_z = hoop29_z + 0.025 - EYE_H / 2.0   # top of eye 0.025 above hoop29
+    eye_x_left = FACE_X + EYE_SPACING        # character's left = +X
+    eye_x_right = FACE_X - EYE_SPACING       # character's right = -X
 
-    for side, sx in (("Left", 1), ("Right", -1)):   # character's left = +X
-        x = sx * eye_x
+    for side, sx in (("Left", 1), ("Right", -1)):
+        x = sx * EYE_SPACING + FACE_X   # eye centre x
         yaw = math.atan2(x, BODY_R)
-        # Black outline (slightly larger, placed behind)
+        # Black outline (0.02 larger in width/height, 0.008 behind)
         outline = add_ellipsoid(
             f"Eye_{side}_Outline",
-            (eye_width + 0.018, eye_depth + 0.006, eye_height + 0.018),
-            (x, front_y(x, -0.006), eye_z),
+            (EYE_W + 0.02, EYE_DEPTH + 0.006, EYE_H + 0.02),
+            (x, front_y(x, -0.008), eye_z),
             mat_black
         )
         outline.rotation_euler = (0, 0, yaw)
@@ -460,35 +533,36 @@ def main():
         # White sclera
         sclera = add_ellipsoid(
             f"Eye_{side}_Sclera",
-            (eye_width, eye_depth, eye_height),
-            (x, front_y(x, 0.0), eye_z),
+            (EYE_W, EYE_DEPTH, EYE_H),
+            (x, front_y(x, 0.02), eye_z),
             mat_white
         )
         sclera.rotation_euler = (0, 0, yaw)
         parent_to_root(sclera)
-        # Pupil (shifted +X and down)
-        pupil_x = x + 0.022  # shifted to viewer's right (+X)
-        pupil_z = eye_z - 0.01
+        # Pupil (shifted +0.03 in x, -0.02 in z, in front)
+        pupil_x = x + 0.03
+        pupil_z = eye_z - 0.02
         pupil = add_ellipsoid(
             f"Pupil_{side}",
-            (0.085, eye_depth - 0.01, 0.11),
-            (pupil_x, front_y(pupil_x, 0.012), pupil_z),
+            (PUPIL_W, PUPIL_DEPTH, PUPIL_H),
+            (pupil_x, front_y(pupil_x, 0.055), pupil_z),
             mat_black
         )
         pupil.rotation_euler = (0, 0, yaw)
         parent_to_root(pupil)
 
-    # Brows: half torus (top half) above each eye
-    brow_major = 0.05
-    brow_minor = 0.009
-    brow_z = hoop29_z + 0.035
+    # Brows: thin arcs, top half only
+    brow_major = 0.07
+    brow_minor = 0.007
+    eye_top = eye_z + EYE_H / 2.0
+    brow_base_z = max(hoop29_z + 0.05, eye_top + 0.02)
     for side, sx in (("Left", 1), ("Right", -1)):
-        x = sx * eye_x
+        x = sx * EYE_SPACING + FACE_X
         brow = add_torus(
             f"Brow_{side}",
             major_radius=brow_major,
             minor_radius=brow_minor,
-            location=(x, front_y(x, 0.004), brow_z - 0.005),
+            location=(x, front_y(x, 0.004), brow_base_z - 0.005),
             rotation_euler=(math.radians(90), 0, math.atan2(x, BODY_R)),  # ring faces front
             material=mat_black
         )
@@ -501,73 +575,92 @@ def main():
         bm.free()
         parent_to_root(brow)
 
-    # Nose: small round black sphere on Hoop_44
-    nose_diameter = 0.05
+    # Nose: black sphere, diameter 0.08
+    nose_diameter = 0.08
     nose = add_sphere(
         "Nose",
         radius=nose_diameter / 2.0,
-        location=(0, -(HOOP_MAJOR_R + HOOP_MINOR_R) - 0.005, hoop44_z),
+        location=(FACE_X, -(HOOP_MAJOR_R + HOOP_MINOR_R) - 0.03, hoop44_z),
         material=mat_black
     )
     parent_to_root(nose)
 
-    # Mouth: open smile, a dark half-ellipse slab with its flat top just under the nose
-    mouth_width = 0.17
-    mouth_height = 0.09
-    mouth_top_z = hoop44_z - 0.035
-    mouth = add_half_disc("Mouth", mouth_width, mouth_height, 0.03,
-                          (0, front_y(0, 0.0), mouth_top_z), mat_mouth_in)
+    # Mouth: D-shaped open smile
+    mouth_top_z = hoop44_z - 0.05
+    mouth = add_half_disc("Mouth", MOUTH_WIDTH, MOUTH_HEIGHT, 0.03,
+                          (FACE_X, front_y(0, 0.0), mouth_top_z), mat_mouth_in)
     parent_to_root(mouth)
 
-    # White upper teeth: thin slab just under the flat top edge, slightly in front
-    teeth_width, teeth_height, teeth_depth = 0.12, 0.025, 0.02
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, front_y(0, 0.012), mouth_top_z - teeth_height / 2.0 - 0.004))
+    # White upper teeth: thin slab under flat top edge
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(FACE_X, front_y(0, 0.012), mouth_top_z - TEETH_HEIGHT / 2.0 - 0.004))
     teeth = bpy.context.active_object
     teeth.name = "Teeth_Upper"
-    teeth.scale = (teeth_width, teeth_depth, teeth_height)
+    teeth.scale = (TEETH_WIDTH, TEETH_DEPTH, TEETH_HEIGHT)
     teeth.data.materials.append(mat_white)
     parent_to_root(teeth)
 
-    # ---- Logo zone (three gold pieces) ----
-    logo_center_z = (hoop44_z + (body_top_z - 0.76 * BODY_H)) / 2.0  # between hoop44 and hoop76
-    # Actually hoop76_z = body_top_z - 0.76 * BODY_H
-    hoop76_z = body_top_z - 0.76 * BODY_H
-    logo_center_z = (hoop44_z + hoop76_z) / 2.0
-
-    # Badge: disc on left (-X), diameter 0.26, short cylinder rotated to face front
-    badge_diameter = 0.26
-    badge_radius = badge_diameter / 2.0
-    badge_x = -0.25
-    badge_yaw = math.atan2(badge_x, BODY_R)
-    badge = add_cylinder(
-        "Logo_Badge",
-        radius=badge_radius,
-        depth=0.035,
-        location=(badge_x, front_y(badge_x, -0.012), logo_center_z),  # pressed in so the flat disc follows the curve
-        rotation_euler=(math.radians(90), 0, badge_yaw),  # axis to Y, then yaw
-        material=mat_gold_light
+    # Tongue hint
+    tongue_z = mouth_top_z - 0.085
+    tongue = add_ellipsoid(
+        "Tongue",
+        (TONGUE_W, TONGUE_DEPTH, TONGUE_H),
+        (FACE_X, front_y(0, 0.02), tongue_z),  # slightly in front of mouth slab
+        mat_tongue
     )
-    parent_to_root(badge)
+    parent_to_root(tongue)
 
-    # Word bars on right: two curved panels with gap
-    word_width = 0.48
-    word_height = 0.075
-    gap = 0.03
-    radius_panel = BODY_R + BULGE + 0.002  # sit on the bulged fabric
-    # Calculate angular positions to cover x from -0.08 to +0.40 approx.
-    # We'll set x_center for first panel so its left edge is near -0.08
-    left_angle = math.asin(-0.08 / radius_panel)  # approx -0.159 rad
-    half_ang = (word_width / 2.0) / radius_panel  # approx 0.476 rad
-    x_center1 = left_angle + half_ang  # approx 0.317 rad
-    # second panel center = x_center1 + (word_width + gap) / radius_panel
-    # two-line wordmark: same horizontal position, stacked vertically
+    # ---- Logo zone ----
+    hoop76_z = body_top_z - 0.76 * BODY_H
+    mouth_bottom = mouth_top_z - MOUTH_HEIGHT
+    logo_lower_z = mouth_bottom - 0.02
+    logo_upper_z = hoop76_z + 0.03
+    logo_center_z = (logo_lower_z + logo_upper_z) / 2.0
+
+    # Badge: white ring with three gold spheres
+    badge_x = LOGO_X - 0.25
+    badge_yaw = math.atan2(badge_x, BODY_R)
+    badge_ring = add_torus(
+        "Logo_Badge_Ring",
+        major_radius=BADGE_MAJOR_R,
+        minor_radius=BADGE_MINOR_R,
+        location=(badge_x, front_y(badge_x, 0.010), logo_center_z),  # forward enough that the flat ring's edges clear the curve
+        rotation_euler=(math.radians(90), 0, badge_yaw),
+        material=mat_white
+    )
+    parent_to_root(badge_ring)
+
+    # Three gold spheres inside ring (triangle: top centre, two bottom)
+    sphere_positions = [
+        (badge_x, logo_center_z + 0.04),
+        (badge_x - 0.04, logo_center_z - 0.04),
+        (badge_x + 0.04, logo_center_z - 0.04)
+    ]
+    for i, (sx, sz) in enumerate(sphere_positions):
+        sphere = add_sphere(
+            f"Logo_Badge_Sphere_{i+1}",
+            radius=BADGE_SPHERE_R,
+            location=(sx, front_y(sx, 0.01), sz),
+            material=mat_gold
+        )
+        parent_to_root(sphere)
+
+    # Wordmark: two stacked curved bars, left edge at about LOGO_X - 0.10
+    word_width = LOGO_WIDTH
+    word_height = LOGO_HEIGHT
+    gap = LOGO_GAP
+    radius_panel = BODY_R + BULGE + 0.002
+    left_x = LOGO_X - 0.10
+    left_angle = math.asin(left_x / radius_panel)
+    half_ang = (word_width / 2.0) / radius_panel
+    x_center1 = left_angle + half_ang
+    # Top bar: mat_gold_light, bottom bar: mat_gold
     word1 = add_front_panel(
         "Logo_Word1",
         word_width,
         word_height,
         logo_center_z + (word_height + gap) / 2.0,
         radius_panel,
-        material=mat_gold,
+        material=mat_gold_light,
         thickness=0.012,
         x_center=x_center1
     )
@@ -585,33 +678,36 @@ def main():
     parent_to_root(word2)
 
     # ---- Arms (Bezier curves) ----
-    shoulder_z = body_top_z - SHOULDER_FROM_TOP * BODY_H  # 40% from top
+    shoulder_z = body_top_z - SHOULDER_FROM_TOP * BODY_H  # 50% from top
     hip_z = body_top_z - HIP_FROM_TOP * BODY_H            # 80% from top
 
-    # Character's LEFT arm (+X), raised and waving: hand above/outside the lid
-    left_arm_points = [
-        (BODY_R - 0.02, 0.0, shoulder_z),
-        (0.72, -0.02, shoulder_z + 0.05),
-        (0.86, -0.05, shoulder_z + 0.35),
-        (0.80, -0.08, body_top_z + 0.12),
-    ]
-    parent_to_root(add_bezier_curve("Arm_Left", left_arm_points, ARM_RADIUS, mat_arms_legs))
-
-    # Character's RIGHT arm (-X), hanging down, hand near the hip
+    # Character's RIGHT arm (-X), waving, open palm
     right_arm_points = [
-        (-(BODY_R - 0.02), 0.0, shoulder_z),
-        (-0.66, -0.02, shoulder_z - 0.10),
-        (-0.68, -0.04, hip_z + 0.15),
-        (-0.62, -0.05, hip_z + 0.02),
+        (-(BODY_R - 0.02), -0.08, shoulder_z),   # shoulder point
+        (-0.72, -0.02, shoulder_z + 0.05),
+        (-0.86, -0.05, shoulder_z + 0.35),
+        (-0.80, -0.10, body_top_z + 0.12),       # hand above/outside lid
     ]
     parent_to_root(add_bezier_curve("Arm_Right", right_arm_points, ARM_RADIUS, mat_arms_legs))
 
-    # ---- Gloves (cuff + palm + 4 stubby fingers) ----
-    for o in add_glove("Left", left_arm_points, mat_white) + add_glove("Right", right_arm_points, mat_white):
+    # Character's LEFT arm (+X), resting, glove
+    left_arm_points = [
+        (BODY_R - 0.02, -0.08, shoulder_z),      # shoulder point
+        (0.66, -0.02, shoulder_z - 0.10),
+        (0.68, -0.04, hip_z + 0.15),
+        (0.62, -0.05, hip_z + 0.02),
+    ]
+    parent_to_root(add_bezier_curve("Arm_Left", left_arm_points, ARM_RADIUS, mat_arms_legs))
+
+    # ---- Hands ----
+    # Waving arm: open palm (Arm_Right)
+    for o in add_open_hand("Right", right_arm_points, mat_white):
+        parent_to_root(o)
+    # Resting arm: glove (Arm_Left)
+    for o in add_glove("Left", left_arm_points, mat_white):
         parent_to_root(o)
 
     # ---- Legs (Bezier curves, straight down) ----
-    # Legs are spread a bit wider than 0.25 so the 0.34-wide shoes do not overlap.
     leg_x = 0.19
     for side, sx in (("Left", 1), ("Right", -1)):
         leg = add_bezier_curve(f"Leg_{side}",
