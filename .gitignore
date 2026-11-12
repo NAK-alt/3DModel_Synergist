@@ -7,3 +7,5 @@ exports/
 
 tmp/
 textures/
+
+*.zip
