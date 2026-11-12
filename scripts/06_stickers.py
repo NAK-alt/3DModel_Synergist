@@ -152,14 +152,14 @@ def create_clipboard(check=False):
     board_mat = make_felt_material("Clipboard_Board", "#8A5A2B")
     board.data.materials.append(board_mat)
     # Paper
-    bpy.ops.mesh.primitive_plane_add(size=1, enter_editmode=False, align='WORLD', location=(0, 0.012, 0))
+    # thin upright box (a plane would need rotating, and transform_apply bakes its offset first)
+    bpy.ops.mesh.primitive_cube_add(size=1, enter_editmode=False, align='WORLD', location=(0, 0.012, 0))
     paper = bpy.context.active_object
     paper.name = name + "_Paper"
-    paper.scale = (0.26, 0.32, 1)
+    paper.scale = (0.26, 0.002, 0.32)
     bpy.ops.object.transform_apply(scale=True)
     paper_mat = make_felt_material("Clipboard_Paper", "#F4F2EE")
     paper.data.materials.append(paper_mat)
-    paper.rotation_euler = Euler((radians(90), 0, 0), 'XYZ')  # plane_add is flat (XY): stand it up
     paper.parent = board
     paper.matrix_parent_inverse = Matrix.Identity(4)
     # Clip
@@ -188,29 +188,20 @@ def create_clipboard(check=False):
             line.parent = paper
             line.matrix_parent_inverse = Matrix.Identity(4)
     else:
-        # Green check mark: two thick boxes forming a tick
-        check_mat = make_felt_material("Clipboard_Check", "#2DBE60")
-        # Vertical bar
-        bpy.ops.mesh.primitive_cube_add(size=1, enter_editmode=False, align='WORLD',
-                                        location=(-0.04, 0.015, -0.02))
-        bar1 = bpy.context.active_object
-        bar1.name = name + "_CheckBar1"
-        bar1.scale = (0.04, 0.002, 0.12)
-        bpy.ops.object.transform_apply(scale=True)
-        bar1.data.materials.append(check_mat)
-        bar1.parent = paper
-        bar1.matrix_parent_inverse = Matrix.Identity(4)
-        # Diagonal bar
-        bpy.ops.mesh.primitive_cube_add(size=1, enter_editmode=False, align='WORLD',
-                                        location=(0.04, 0.015, -0.05))
-        bar2 = bpy.context.active_object
-        bar2.name = name + "_CheckBar2"
-        bar2.scale = (0.1, 0.002, 0.04)
-        bar2.rotation_euler = Euler((0, 0, radians(-45)), 'XYZ')
-        bpy.ops.object.transform_apply(rotation=True, scale=True)
-        bar2.data.materials.append(check_mat)
-        bar2.parent = paper
-        bar2.matrix_parent_inverse = Matrix.Identity(4)
+        # Big green tick: short stroke down-right, long stroke up-right, both standing proud of the paper
+        check_mat = make_felt_material("Clipboard_Check", "#1FA34F")
+        for nm, cx, cz, length, ang in (("_CheckBar1", -0.045, -0.035, 0.11, 45),
+                                         ("_CheckBar2", 0.035, 0.0, 0.22, -55)):
+            bpy.ops.mesh.primitive_cube_add(size=1, enter_editmode=False, align='WORLD', location=(0, 0, 0))
+            bar = bpy.context.active_object
+            bar.name = name + nm
+            bar.scale = (length, 0.012, 0.045)
+            bar.rotation_euler = Euler((0, radians(ang), 0), 'XYZ')
+            bpy.ops.object.transform_apply(rotation=True, scale=True)
+            bar.location = (cx, 0.02, cz)
+            bar.data.materials.append(check_mat)
+            bar.parent = board
+            bar.matrix_parent_inverse = Matrix.Identity(4)
     return board
 
 def create_pen():
@@ -541,8 +532,7 @@ def create_envelope():
     seal.matrix_parent_inverse = Matrix.Identity(4)
     return env
 
-def create_confetti():
-    name = "StkProp_Confetti"
+def create_confetti(name="StkProp_Confetti", count=60):
     if name in bpy.data.objects:
         bpy.data.objects.remove(bpy.data.objects[name], do_unlink=True)
     # Create a single mesh object with multiple materials
@@ -555,7 +545,7 @@ def create_confetti():
     # but easier: create a single mesh with vertices for many boxes/discs.
     # For simplicity, create each piece as a separate object, then join.
     pieces = []
-    for _ in range(60):
+    for _ in range(count):
         # random shape: box or disc
         if random.random() < 0.5:
             bpy.ops.mesh.primitive_cube_add(size=1, enter_editmode=False, align='WORLD', location=(0,0,0))
@@ -654,6 +644,7 @@ def create_all_props():
     props["Laptop"] = create_laptop()
     props["Envelope"] = create_envelope()
     props["Confetti"] = create_confetti()
+    props["ConfettiLight"] = create_confetti("StkProp_ConfettiLight", 24)  # sticker 10: ~60% less
     props["Stars"] = create_stars()
     # Hide all props initially
     for obj in props.values():
@@ -886,7 +877,7 @@ STICKERS = [
         "caption": "PAID!",
         "face": "Excited",
         "overrides": {},
-        "props": ["ClipboardCheck", "Confetti"],
+        "props": ["ClipboardCheck", "ConfettiLight"],
         "pose": lambda: sticker10_pose(),
     },
     {
@@ -1102,8 +1093,10 @@ def sticker10_pose():
     view_layer.update()
     sock = bpy.data.objects["Socket_Hand.R"]
     clip = props_dict["ClipboardCheck"]
-    clip.matrix_world = Matrix.Translation(sock.matrix_world.translation + Vector((0, -0.05, 0.22))) @ \
-                        Matrix.Rotation(radians(10), 4, 'Z') @ Matrix.Rotation(radians(180), 4, 'Z')
+    # forward toward the camera and bigger so the check reads at sticker size
+    clip.matrix_world = Matrix.Translation(sock.matrix_world.translation + Vector((0.05, -0.25, 0.16))) @ \
+                        Matrix.Rotation(radians(8), 4, 'Z') @ Matrix.Rotation(radians(180), 4, 'Z') @ \
+                        Matrix.Diagonal((1.7, 1.7, 1.7, 1.0))
 
 def sticker12_pose():
     pose_wave_r()
