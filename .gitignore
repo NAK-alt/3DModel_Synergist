@@ -4,3 +4,6 @@ __pycache__/
 blend/
 refs/
 exports/
+
+tmp/
+textures/
