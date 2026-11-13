@@ -42,7 +42,7 @@ def _set(bsdf, **kw):
             bsdf.inputs[k].default_value = v
 
 
-def fleece(name, hexcol, pile=1.0, sheen=0.35):
+def fleece(name, hexcol, pile=1.0, sheen=0.35, uvs=(16, 11)):
     m, nt, bsdf = _mat(name)
     N, Lk = nt.nodes.new, nt.links.new
     base = hex_rgb(hexcol)
@@ -82,11 +82,37 @@ def fleece(name, hexcol, pile=1.0, sheen=0.35):
     ramp.inputs["From Min"].default_value = 0.3
     ramp.inputs["From Max"].default_value = 0.7
     Lk(var.outputs["Fac"], ramp.inputs["Value"])
+    # crushed-velvet swirl pattern of the real plush (tileable texture, UV mapped)
+    uvn = N("ShaderNodeUVMap")
+    vmap = N("ShaderNodeMapping")
+    vmap.inputs["Scale"].default_value = (uvs[0], uvs[1], 1.0)
+    Lk(uvn.outputs["UV"], vmap.inputs["Vector"])
+    vimg = N("ShaderNodeTexImage")
+    vimg.image = bpy.data.images.load(os.path.join(ROOT, "textures", "velvet.png"), check_existing=True)
+    vimg.image.colorspace_settings.name = "Non-Color"
+    Lk(vmap.outputs["Vector"], vimg.inputs["Vector"])
+    vfac = N("ShaderNodeMapRange")
+    vfac.inputs["From Min"].default_value = 0.70
+    vfac.inputs["From Max"].default_value = 1.0
+    Lk(vimg.outputs["Color"], vfac.inputs["Value"])
+    both = N("ShaderNodeMix")
+    both.data_type = "FLOAT"
+    both.inputs["Factor"].default_value = 0.85
+    Lk(ramp.outputs["Result"], both.inputs["A"])
+    Lk(vfac.outputs["Result"], both.inputs["B"])
+    nimg = N("ShaderNodeTexImage")
+    nimg.image = bpy.data.images.load(os.path.join(ROOT, "textures", "velvet_n.png"), check_existing=True)
+    nimg.image.colorspace_settings.name = "Non-Color"
+    Lk(vmap.outputs["Vector"], nimg.inputs["Vector"])
+    nmap = N("ShaderNodeNormalMap")
+    nmap.inputs["Strength"].default_value = 1.0
+    Lk(nimg.outputs["Color"], nmap.inputs["Color"])
+    Lk(nmap.outputs["Normal"], bump.inputs["Normal"])
     col = N("ShaderNodeMix")
     col.data_type = "RGBA"
-    col.inputs["A"].default_value = tuple(c * 0.74 for c in base[:3]) + (1,)
-    col.inputs["B"].default_value = tuple(min(1.0, c * 1.16 + 0.001) for c in base[:3]) + (1,)
-    Lk(ramp.outputs["Result"], col.inputs["Factor"])
+    col.inputs["A"].default_value = tuple(c * 0.58 for c in base[:3]) + (1,)
+    col.inputs["B"].default_value = tuple(min(1.0, c * 1.42 + 0.002) for c in base[:3]) + (1,)
+    Lk(both.outputs["Result"], col.inputs["Factor"])
     Lk(col.outputs["Result"], bsdf.inputs["Base Color"])
     tint = tuple(min(1.0, 0.25 + 2.2 * c) for c in base[:3]) + (1,)
     _set(bsdf, Roughness=0.92, **{"Sheen Weight": sheen, "Sheen Roughness": 0.45, "Sheen Tint": tint,
@@ -172,8 +198,8 @@ def logo_material():
 def make_materials():
     M = {}
     M["blue"] = fleece("M_Fleece_Blue", C_BLUE)
-    M["navy"] = fleece("M_Fleece_Navy", C_NAVY, sheen=0.5)
-    M["glove"] = fleece("M_Fleece_White", C_WHITE, pile=0.9, sheen=0.4)
+    M["navy"] = fleece("M_Fleece_Navy", C_NAVY, sheen=0.5, uvs=(3, 7))
+    M["glove"] = fleece("M_Fleece_White", C_WHITE, pile=0.9, sheen=0.4, uvs=(3, 3))
     M["white"] = thread("M_Thread_White", "#F6F4EF", angle=0.3)
     M["black"] = thread("M_Thread_Black", "#050508", rough=0.6, angle=1.45, sheen=0.06)
     M["mouth"] = thread("M_Thread_Mouth", "#45454C", angle=0.0)
@@ -183,7 +209,7 @@ def make_materials():
     M["heart"] = thread("M_Thread_Heart", "#E8243C", angle=0.8)
     M["star"] = thread("M_Thread_Star", "#FFC62E", angle=0.8)
     M["tear"] = thread("M_Thread_Tear", "#8FD6FF", angle=1.57, rough=0.3)
-    M["nose"] = fleece("M_Felt_Nose", "#08080B", pile=0.6, sheen=0.6)
+    M["nose"] = fleece("M_Felt_Nose", "#08080B", pile=0.6, sheen=0.6, uvs=(2, 2))
     M["logo"] = logo_material()
     return M
 
