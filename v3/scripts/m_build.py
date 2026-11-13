@@ -42,7 +42,7 @@ def _set(bsdf, **kw):
             bsdf.inputs[k].default_value = v
 
 
-def fleece(name, hexcol, pile=1.0, sheen=0.35, uvs=(16, 11)):
+def fleece(name, hexcol, pile=1.0, sheen=0.35, uvs=(16, 11), crush=0.85, nstr=1.0, spread=(0.58, 1.42)):
     m, nt, bsdf = _mat(name)
     N, Lk = nt.nodes.new, nt.links.new
     base = hex_rgb(hexcol)
@@ -97,7 +97,7 @@ def fleece(name, hexcol, pile=1.0, sheen=0.35, uvs=(16, 11)):
     Lk(vimg.outputs["Color"], vfac.inputs["Value"])
     both = N("ShaderNodeMix")
     both.data_type = "FLOAT"
-    both.inputs["Factor"].default_value = 0.85
+    both.inputs["Factor"].default_value = crush
     Lk(ramp.outputs["Result"], both.inputs["A"])
     Lk(vfac.outputs["Result"], both.inputs["B"])
     nimg = N("ShaderNodeTexImage")
@@ -105,13 +105,13 @@ def fleece(name, hexcol, pile=1.0, sheen=0.35, uvs=(16, 11)):
     nimg.image.colorspace_settings.name = "Non-Color"
     Lk(vmap.outputs["Vector"], nimg.inputs["Vector"])
     nmap = N("ShaderNodeNormalMap")
-    nmap.inputs["Strength"].default_value = 1.0
+    nmap.inputs["Strength"].default_value = nstr
     Lk(nimg.outputs["Color"], nmap.inputs["Color"])
     Lk(nmap.outputs["Normal"], bump.inputs["Normal"])
     col = N("ShaderNodeMix")
     col.data_type = "RGBA"
-    col.inputs["A"].default_value = tuple(c * 0.58 for c in base[:3]) + (1,)
-    col.inputs["B"].default_value = tuple(min(1.0, c * 1.42 + 0.002) for c in base[:3]) + (1,)
+    col.inputs["A"].default_value = tuple(c * spread[0] for c in base[:3]) + (1,)
+    col.inputs["B"].default_value = tuple(min(1.0, c * spread[1] + 0.002) for c in base[:3]) + (1,)
     Lk(both.outputs["Result"], col.inputs["Factor"])
     Lk(col.outputs["Result"], bsdf.inputs["Base Color"])
     tint = tuple(min(1.0, 0.25 + 2.2 * c) for c in base[:3]) + (1,)
@@ -199,7 +199,7 @@ def make_materials():
     M = {}
     M["blue"] = fleece("M_Fleece_Blue", C_BLUE)
     M["navy"] = fleece("M_Fleece_Navy", C_NAVY, sheen=0.5, uvs=(3, 7))
-    M["glove"] = fleece("M_Fleece_White", C_WHITE, pile=0.9, sheen=0.4, uvs=(3, 3))
+    M["glove"] = fleece("M_Fleece_White", C_WHITE, pile=0.9, sheen=0.4, uvs=(3, 3), crush=0.25, nstr=0.25, spread=(0.90, 1.04))
     M["white"] = thread("M_Thread_White", "#F6F4EF", angle=0.3)
     M["black"] = thread("M_Thread_Black", "#050508", rough=0.6, angle=1.45, sheen=0.06)
     M["mouth"] = thread("M_Thread_Mouth", "#45454C", angle=0.0)
