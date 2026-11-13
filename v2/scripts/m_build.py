@@ -1,4 +1,4 @@
-﻿"""Synergist mascot v2: builds the whole character (meshes, materials, armature, face keys)."""
+"""Synergist mascot v2: builds the whole character (meshes, materials, armature, face keys)."""
 import math
 import os
 
@@ -440,7 +440,7 @@ def build(shape_keys=True):
 
     # logo patch
     mb = MB()
-    nx, ny = (140, 48) if HI else (36, 12)
+    nx, ny = (260, 90) if HI else (220, 76)
     hh = LOGO_W * (700 / 2048) / 2
     v, uv, f = [], [], []
     for i in range(nx):
@@ -449,10 +449,25 @@ def build(shape_keys=True):
             z = LOGO_ZC - hh + 2 * hh * j / (ny - 1)
             v.append(surf(x, z, 0.0045))
             uv.append((i / (nx - 1), j / (ny - 1)))
+    # keep only the cells the artwork covers, so the logo also reads without textures (solid view)
+    import numpy as np
+    img = bpy.data.images.load(os.path.join(ROOT, "textures", "logo_color.png"), check_existing=True)
+    iw, ih = img.size
+    px = np.empty(iw * ih * 4, dtype=np.float32)
+    img.pixels.foreach_get(px)
+    alpha = px.reshape(ih, iw, 4)[:, :, 3]
     for i in range(nx - 1):
+        x0, x1 = int(i / (nx - 1) * iw), int((i + 1) / (nx - 1) * iw)
         for j in range(ny - 1):
+            y0, y1 = int(j / (ny - 1) * ih), int((j + 1) / (ny - 1) * ih)
+            if alpha[max(0, y0 - 3):y1 + 4, max(0, x0 - 3):x1 + 4].max() < 0.02:
+                continue
             a = i * ny + j
             f.append((a, a + ny, a + ny + 1, a + 1))
+    used = sorted({k for q in f for k in q})
+    remap = {k: n for n, k in enumerate(used)}
+    v, uv = [v[k] for k in used], [uv[k] for k in used]
+    f = [tuple(remap[k] for k in q) for q in f]
     mb.add(v, f, uvs=uv, weights={"body": 1.0})
     objs["logo"] = mb.build("Mascot_Logo", [M["logo"]], coll)
     objs["logo"].visible_shadow = False
